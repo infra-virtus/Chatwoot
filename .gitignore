@@ -1,0 +1,4 @@
+# Segredos: nunca versionar
+.env
+*.token
+*.key

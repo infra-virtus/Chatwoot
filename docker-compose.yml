@@ -1,0 +1,147 @@
+# Chatwoot — stack Swarm "chatwoot" (deploy via Portainer)
+# Domínio: https://visualchat.wendellcarvalho.com.br (Traefik por labels, rede traefik_public)
+# Recursos ficam com prefixo do stack: chatwoot_storage, chatwoot_postgres_data, chatwoot_internal...
+# Hosts internos usam o nome completo (chatwoot_postgres / chatwoot_redis) para não colidir
+# com os serviços "postgres"/"redis" de outros stacks.
+
+version: '3.8'
+
+x-chatwoot-env: &chatwoot-env
+  NODE_ENV: production
+  RAILS_ENV: production
+  INSTALLATION_ENV: docker
+  FRONTEND_URL: ${FRONTEND_URL}
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+  DEFAULT_LOCALE: pt_BR
+  ENABLE_ACCOUNT_SIGNUP: 'false'
+  FORCE_SSL: 'false' # SSL termina no Traefik
+  POSTGRES_HOST: chatwoot_postgres
+  POSTGRES_PORT: '5432'
+  POSTGRES_DATABASE: chatwoot
+  POSTGRES_USERNAME: postgres
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  REDIS_URL: redis://chatwoot_redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  ACTIVE_STORAGE_SERVICE: local
+  RAILS_LOG_TO_STDOUT: 'true'
+  LOG_LEVEL: info
+
+services:
+  rails:
+    image: ${CHATWOOT_IMAGE}
+    environment: *chatwoot-env
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['sh', '-c', 'bundle exec rails db:chatwoot_prepare && exec bundle exec rails s -p 3000 -b 0.0.0.0']
+    volumes:
+      - storage:/app/storage
+    networks:
+      - internal
+      - traefik_public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          memory: 1536M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik_public
+        - traefik.http.routers.chatwoot.rule=Host(`visualchat.wendellcarvalho.com.br`)
+        - traefik.http.routers.chatwoot.entrypoints=websecure
+        - traefik.http.routers.chatwoot.tls=true
+        - traefik.http.routers.chatwoot.tls.certresolver=le
+        - traefik.http.services.chatwoot.loadbalancer.server.port=3000
+
+  sidekiq:
+    image: ${CHATWOOT_IMAGE}
+    environment: *chatwoot-env
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    volumes:
+      - storage:/app/storage
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          memory: 1536M
+
+  # Espelho: registra no Chatwoot as respostas enviadas pela Blip (código em blip-bridge/server.mjs)
+  blip_bridge:
+    image: node:22-alpine
+    command: ['node', '/app/server.mjs']
+    environment:
+      CHATWOOT_URL: http://chatwoot_rails:3000
+      CHATWOOT_ACCOUNT_ID: '1'
+      CHATWOOT_INBOX_ID: '1'
+      CHATWOOT_USER_TOKEN: ${CHATWOOT_USER_TOKEN}
+      CHATWOOT_BOT_TOKEN: ${CHATWOOT_BOT_TOKEN}
+      BLIP_WEBHOOK_PATH_TOKEN: ${BLIP_WEBHOOK_PATH_TOKEN}
+      PORT: '8080'
+    volumes:
+      - /home/infra/deploy/chatwoot/blip-bridge:/app:ro
+    networks:
+      - internal
+      - traefik_public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: 128M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik_public
+        - traefik.http.routers.chatwoot-blip.rule=Host(`visualchat.wendellcarvalho.com.br`) && PathPrefix(`/blip-webhook/`)
+        - traefik.http.routers.chatwoot-blip.priority=300
+        - traefik.http.routers.chatwoot-blip.entrypoints=websecure
+        - traefik.http.routers.chatwoot-blip.tls=true
+        - traefik.http.routers.chatwoot-blip.tls.certresolver=le
+        - traefik.http.services.chatwoot-blip.loadbalancer.server.port=8080
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  redis:
+    image: redis:7-alpine
+    command: ['sh', '-c', 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+volumes:
+  storage:
+  postgres_data:
+  redis_data:
+
+networks:
+  internal:
+    driver: overlay
+  traefik_public:
+    external: true
