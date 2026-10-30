@@ -34,6 +34,7 @@ services:
     command: ['sh', '-c', 'bundle exec rails db:chatwoot_prepare && exec bundle exec rails s -p 3000 -b 0.0.0.0']
     volumes:
       - storage:/app/storage
+      - /home/infra/deploy/chatwoot/patches/zz_virtus_block_whatsapp_send.rb:/app/config/initializers/zz_virtus_block_whatsapp_send.rb:ro
     networks:
       - internal
       - traefik_public
@@ -60,6 +61,7 @@ services:
     command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
     volumes:
       - storage:/app/storage
+      - /home/infra/deploy/chatwoot/patches/zz_virtus_block_whatsapp_send.rb:/app/config/initializers/zz_virtus_block_whatsapp_send.rb:ro
     networks:
       - internal
     deploy:

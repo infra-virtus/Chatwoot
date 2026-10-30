@@ -107,3 +107,58 @@
   place();
 })();
 </script>
+
+<!-- Envio pelo Chatwoot bloqueado (o atendimento é na Blip): a caixa de resposta fica sempre em
+     "Mensagem Privada" e a opção "Responder" some. O bloqueio real é no servidor
+     (patches/zz_virtus_block_whatsapp_send.rb); isto só evita tentativas na tela. -->
+<style id="virtus-reply-lock-style">
+  button[data-virtus-locked] { pointer-events: none; }
+  button[data-virtus-locked] > div:first-child { display: none; }
+  button[data-virtus-locked] > div:last-child { display: none; } /* chip deslizante do seletor */
+  .virtus-reply-lock-hint {
+    font: 500 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: rgb(var(--slate-10)); margin-inline-start: 8px; white-space: nowrap;
+  }
+</style>
+<script id="virtus-reply-lock-script">
+(function () {
+  var REPLY = ['Responder', 'Reply'];
+  var NOTE = ['Mensagem Privada', 'Private Note', 'Nota privada'];
+
+  function isModeToggle(btn) {
+    var kids = btn.children;
+    if (kids.length !== 3) return false;
+    return REPLY.indexOf(kids[0].textContent.trim()) !== -1 && NOTE.indexOf(kids[1].textContent.trim()) !== -1;
+  }
+
+  // O chip do seletor fica em translate-x 0 quando o modo é "Responder"
+  function inReplyMode(btn) {
+    var chip = btn.children[2];
+    return chip && (chip.style.getPropertyValue('--translate-x') || '0px').trim() === '0px';
+  }
+
+  function lock() {
+    scheduled = false;
+    var buttons = document.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      if (!isModeToggle(btn)) continue;
+      if (inReplyMode(btn) && !btn.disabled) btn.click(); // passa para "Mensagem Privada"
+      if (!btn.hasAttribute('data-virtus-locked')) {
+        btn.setAttribute('data-virtus-locked', '');
+        btn.title = 'Envio pelo Chatwoot desativado: responda o cliente pela Blip';
+        var hint = document.createElement('span');
+        hint.className = 'virtus-reply-lock-hint';
+        hint.textContent = 'Somente nota interna · responda o cliente pela Blip';
+        btn.insertAdjacentElement('afterend', hint);
+      }
+    }
+  }
+
+  var scheduled = false;
+  new MutationObserver(function () {
+    if (!scheduled) { scheduled = true; requestAnimationFrame(lock); }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+  lock();
+})();
+</script>

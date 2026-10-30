@@ -54,15 +54,32 @@ const bare = (identity) => {
 const domainOf = (identity) => identity.slice(identity.indexOf('@') + 1);
 const maskPhone = (digits) => `+${digits.slice(0, 4)}…${digits.slice(-4)}`;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Chatwoot reiniciando (deploy, atualização) responde com erro de rede ou 5xx: tenta de novo por ~3 min
+// para não perder mensagens da Blip. A fila serial segura as seguintes na ordem.
 async function api(path, { method = 'GET', token = USER_TOKEN, body } = {}) {
-  const res = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${ACCOUNT_ID}${path}`, {
-    method,
-    headers: { api_access_token: token, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${path} -> HTTP ${res.status}: ${text.slice(0, 300)}`);
-  return text ? JSON.parse(text) : null;
+  for (let tentativa = 1; ; tentativa++) {
+    let res;
+    try {
+      res = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${ACCOUNT_ID}${path}`, {
+        method,
+        headers: { api_access_token: token, 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {
+      if (tentativa >= 12) throw e;
+      await sleep(15000);
+      continue;
+    }
+    const text = await res.text();
+    if (res.status >= 500 && tentativa < 12) {
+      await sleep(15000);
+      continue;
+    }
+    if (!res.ok) throw new Error(`${method} ${path} -> HTTP ${res.status}: ${text.slice(0, 300)}`);
+    return text ? JSON.parse(text) : null;
+  }
 }
 
 function render(type, content) {

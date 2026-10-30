@@ -72,6 +72,16 @@ A ponte mantém o campo de conversa `atendimento` a partir de evidências da Bli
 - Encerramento automático da conta: 24h (`auto_resolve_after=1440`, sem mensagem ao cliente).
 - `scripts/finalize-stale.py`: finaliza conversas antigas sem estado e inativas há mais de 24h (idempotente).
 
+## Envio pelo Chatwoot bloqueado
+
+O atendimento ao cliente é feito na Blip; o Chatwoot só acompanha.
+- **Servidor:** `patches/zz_virtus_block_whatsapp_send.rb` é montado em `/app/config/initializers/` nos serviços
+  `rails` e `sidekiq` e substitui o envio do WhatsApp: toda mensagem escrita no Chatwoot fica `failed` com o motivo
+  "Envio pelo Chatwoot bloqueado: responda pela Blip." Notas privadas e o espelho da Blip não são afetados.
+  Para liberar o envio, remover a linha do volume nos dois serviços e atualizar a stack.
+- **Tela:** `branding/dashboard-scripts.html` deixa a caixa de resposta sempre em "Mensagem Privada" e esconde "Responder".
+- A ponte refaz chamadas ao Chatwoot por até ~3 min quando ele está reiniciando (não perde mensagens da Blip).
+
 ## Operação
 
 - **Atualizar versão:** no Portainer → Stacks → chatwoot → Editor, trocar `CHATWOOT_IMAGE` nas variáveis
