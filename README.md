@@ -61,7 +61,12 @@ A ponte mantém o campo de conversa `atendimento` a partir de evidências da Bli
 - Atributos auxiliares: `atendimento_desde`, `ia_inicio`, `transferido_em`, `humano_inicio`, `atendente_blip`,
   `finalizado_por` (IA / Atendente / Inatividade), `finalizado_em`. Cada mudança gera uma nota privada "🔁 Atendimento: …".
 - Após "Finalizado", 30 min de fechamento: mensagens da pesquisa de satisfação não reabrem o atendimento.
-- Pastas (do usuário infra): Atendimentos IA, Aguardando atendente, Em atendimento humano (todas excluem resolvidas) e Histórico.
+- Pastas (do usuário infra): **Ao vivo** (IA + aguardando + humano, não resolvidas), **Aguardando atendente**,
+  **Histórico IA** (`ia_inicio` preenchido e sem `humano_inicio`) e **Histórico humano** (`humano_inicio` preenchido).
+  Atualizam em tempo real: cada mudança de estado dispara `conversation.updated` e o painel refiltra.
+- Caixa com "reabrir conversa anterior" (`lock_to_single_conversation`): resposta do cliente reabre a mesma conversa.
+- Pesquisa de satisfação: nota 1-5 do cliente logo após o pedido vira `avaliacao` (+ `avaliacao_de` IA/Atendente).
+- `scripts/fix-duplicate-conversations.py`: encerra duplicadas antigas do mesmo cliente (idempotente).
 - Encerramento automático da conta: 24h (`auto_resolve_after=1440`, sem mensagem ao cliente).
 - `scripts/finalize-stale.py`: finaliza conversas antigas sem estado e inativas há mais de 24h (idempotente).
 

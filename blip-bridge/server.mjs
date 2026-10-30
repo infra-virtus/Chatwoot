@@ -292,7 +292,25 @@ async function handle(msg) {
     return;
   }
 
-  if (domainOf(bare(msg.from)) !== 'msging.net') return; // daqui em diante: só o que a Blip ENVIOU
+  // Mensagem do cliente: só interessa como nota da pesquisa de satisfação (1 a 5) logo após o pedido
+  if (domainOf(bare(msg.from)) !== 'msging.net') {
+    const nota = String(msg.type === 'text/plain' ? msg.content : msg.content?.text ?? '').trim().match(/^([1-5])\b/);
+    if (!nota) return;
+    const conversationId = await conversationFor(digits);
+    if ((await estadoAtual(conversationId)) !== ESTADO.FIM || !(await dentroDoFechamento(conversationId))) return;
+    const conv = await api(`/conversations/${conversationId}`);
+    if (conv.custom_attributes?.avaliacao != null) return; // vale a primeira nota
+    const de = conv.custom_attributes?.finalizado_por === 'IA' ? 'IA' : 'Atendente';
+    await api(`/conversations/${conversationId}/custom_attributes`, {
+      method: 'POST',
+      body: { custom_attributes: { avaliacao: Number(nota[1]), avaliacao_de: de, avaliacao_em: new Date().toISOString() }, merge: true },
+    });
+    await api(`/conversations/${conversationId}/messages`, {
+      method: 'POST', token: BOT_TOKEN, body: { content: `⭐ Avaliação do cliente: ${nota[1]}/5 (${de})`, private: true },
+    });
+    log(`avaliação ${nota[1]} (${de}) -> conversa ${conversationId}`);
+    return;
+  }
 
   const sourceId = `blip:${msg.id}`;
   if (seen.has(sourceId)) return;
