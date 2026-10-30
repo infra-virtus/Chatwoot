@@ -34,6 +34,10 @@ const CLOSED_TICKET = /^Closed/; // ClosedAttendant, ClosedClient, ClosedClientI
 // Mensagem do bot pedindo avaliação encerra o atendimento (regra definida com a operação)
 const SURVEY = /avalia(r|ção|cao)|nota de [01] a (5|10)|de 1 a 5|satisfa(ção|cao|ito)|como foi (o|seu) atendimento/i;
 
+// Fluxo da Blip: saudação inicia um atendimento; despedida fecha a pesquisa de satisfação
+const SAUDACAO = /seja muito bem-vind|como posso te ajudar hoje/i;
+const DESPEDIDA = /agradecemos o seu contato/i;
+
 const ESTADO = {
   IA: 'IA',
   AGUARDANDO: 'Aguardando atendente',
@@ -340,9 +344,12 @@ async function handle(msg) {
   const atual = await estadoAtual(conversationId);
   // A pesquisa de satisfação continua depois do pedido de avaliação (respostas, comentário, agradecimento):
   // nesse intervalo a conversa segue finalizada e, se a resposta do cliente a reabriu, é encerrada de novo.
-  if (atual === ESTADO.FIM && (await dentroDoFechamento(conversationId))) {
+  // Uma saudação do bot é o começo de um novo atendimento e encerra a janela; a mensagem de despedida
+  // da pesquisa encerra a janela depois de manter a conversa finalizada.
+  if (atual === ESTADO.FIM && !SAUDACAO.test(text) && (await dentroDoFechamento(conversationId))) {
     const conv = await api(`/conversations/${conversationId}`);
     await setStatus(conv, 'resolved');
+    if (DESPEDIDA.test(text)) finalizadoEm.set(conversationId, 0);
     return;
   }
   if (SURVEY.test(text)) {
