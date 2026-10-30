@@ -1,0 +1,82 @@
+<!-- Tema "Virtus" do Atendimento Wendell. Injetado pelo InstallationConfig DASHBOARD_SCRIPTS.
+     Fonte: /home/infra/deploy/chatwoot/branding/dashboard-scripts.html (aplicar com scripts/apply-branding.sh)
+     Paleta oficial: verde-escuro #1B3033, dourado #D6A45E, branco #FFFFFF.
+     O tema liga/desliga pelo botão na borda direita; a escolha fica salva no navegador de cada pessoa. -->
+<style id="virtus-theme-style">
+  /* Base: variáveis do modo escuro do Chatwoot reescritas na paleta Virtus */
+  body.virtus.dark {
+    --slate-1: 18 33 35; --slate-2: 22 40 43; --slate-3: 30 53 56; --slate-4: 36 61 64;
+    --slate-5: 43 70 73; --slate-6: 52 81 84; --slate-7: 66 97 100; --slate-8: 88 118 120;
+    --slate-9: 104 132 134; --slate-10: 120 146 148; --slate-11: 196 208 206; --slate-12: 255 255 255;
+
+    --blue-1: 30 34 32; --blue-2: 38 40 34; --blue-3: 60 52 36; --blue-4: 78 64 40;
+    --blue-5: 98 78 46; --blue-6: 120 94 54; --blue-7: 148 114 64; --blue-8: 182 140 78;
+    --blue-9: 214 164 94; --blue-10: 224 178 112; --blue-11: 232 196 140; --blue-12: 246 228 200;
+
+    --background-color: 27 48 51; --surface-1: 22 40 43; --surface-2: 25 44 47; --surface-active: 43 70 73;
+    --solid-1: 30 53 56; --solid-2: 34 59 62; --solid-3: 43 70 73; --solid-active: 52 81 84;
+    --solid-blue: 78 64 40; --solid-blue-2: 30 53 56;
+    --card-color: 30 53 56; --button-color: 36 61 64; --label-background: 34 59 62;
+    --border-strong: 52 81 84; --border-weak: 36 61 64; --border-blue: 214, 164, 94, 0.5; --border-blue-strong: 232 196 140;
+    --text-blue: 246 228 200;
+    --alpha-1: 30, 53, 56, 0.85; --alpha-3: 27, 48, 51, 0.95;
+  }
+  /* A cor "brand" do Chatwoot é fixa (#2781F6) e não usa variável: troca direta pelo dourado */
+  body.virtus .bg-n-brand { background-color: #D6A45E !important; }
+  body.virtus .bg-n-brand.text-white, body.virtus .bg-n-brand .text-white { color: #1B3033 !important; }
+  body.virtus .text-n-brand { color: #D6A45E !important; }
+  body.virtus .border-n-brand { border-color: #D6A45E !important; }
+  body.virtus .outline-n-brand { outline-color: #D6A45E !important; }
+  body.virtus ::selection { background: rgba(214, 164, 94, 0.35); }
+
+  /* Botão de alternância: aba fina na borda direita, fora das áreas de clique do Chatwoot */
+  #virtus-theme-toggle {
+    position: fixed; z-index: 9999; right: 0; top: 50%; transform: translateY(-50%);
+    writing-mode: vertical-rl; padding: 10px 4px; border: 0; border-radius: 6px 0 0 6px;
+    font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .06em;
+    cursor: pointer; opacity: .55; transition: opacity .15s;
+    background: #1B3033; color: #D6A45E; box-shadow: -1px 0 0 rgba(214, 164, 94, .5);
+  }
+  #virtus-theme-toggle:hover, #virtus-theme-toggle:focus-visible { opacity: 1; outline: 2px solid #D6A45E; outline-offset: 1px; }
+  body.virtus #virtus-theme-toggle { background: #D6A45E; color: #1B3033; }
+</style>
+<script id="virtus-theme-script">
+(function () {
+  var KEY = 'virtusTheme';
+  var read = function () { try { return localStorage.getItem(KEY) === 'on'; } catch (e) { return false; } };
+  var save = function (on) { try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) {} };
+  var on = read();
+
+  // O Chatwoot troca a classe "dark" do body conforme a aparência escolhida;
+  // com o tema Virtus ligado, ela precisa continuar presente.
+  var keepDark = new MutationObserver(function () {
+    if (on && !document.body.classList.contains('dark')) document.body.classList.add('dark');
+  });
+
+  var button = document.createElement('button');
+  button.id = 'virtus-theme-toggle';
+  button.type = 'button';
+
+  function apply() {
+    document.body.classList.toggle('virtus', on);
+    if (on) {
+      document.body.classList.add('dark');
+      document.documentElement.style.setProperty('color-scheme', 'dark');
+      keepDark.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    }
+    button.textContent = on ? 'MODO ESCURO' : 'TEMA VIRTUS';
+    button.title = on ? 'Voltar ao modo escuro padrão' : 'Usar as cores do Grupo Virtus';
+    button.setAttribute('aria-pressed', String(on));
+  }
+
+  button.addEventListener('click', function () {
+    on = !on;
+    save(on);
+    // Ao desligar, recarrega para o Chatwoot reaplicar a aparência escolhida pela pessoa
+    if (on) apply(); else window.location.reload();
+  });
+
+  document.body.appendChild(button);
+  apply();
+})();
+</script>

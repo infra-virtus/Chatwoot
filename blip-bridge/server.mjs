@@ -167,6 +167,18 @@ http
         for (const b of Array.isArray(body) ? body : [body]) {
           const md = b?.metadata || {};
           const botSide = [b?.from, b?.to].map((x) => (x ? bare(x) : '')).find((x) => domainOf(x) === 'msging.net');
+          // Diagnóstico: estrutura de tickets e de itens sem "type", sem dados pessoais
+          if (b?.type === 'application/vnd.iris.ticket+json') {
+            const t = b.content || {};
+            log(`ticket status=${t.status} team=${t.team ?? '-'} agente=${t.agentIdentity ? 'sim' : 'não'} ` +
+              `seq=${t.sequentialId ?? '-'} closedBy=${t.closedBy ? domainOf(bare(t.closedBy)) : '-'} tag=${(t.tags || []).length} ` +
+              `from=${domainOf(bare(b.from || ''))} to=${domainOf(bare(b.to || ''))} chaves=${Object.keys(t).join(',')}`);
+          } else if (md['#messageEmitter'] === 'Human') {
+            const agentKeys = Object.keys(md).filter((k) => /agent|desk|ticket|attendant|user/i.test(k));
+            log(`humano-meta chaves=${agentKeys.join(',') || '(nenhuma)'} temEmail=${agentKeys.some((k) => /@blip\.ai|%40/.test(String(md[k])))}`);
+          } else if (!b?.type) {
+            log(`sem-type chaves=${Object.keys(b || {}).join(',')} category=${b?.category ?? '-'} action=${String(b?.action ?? '-').slice(0, 40)}`);
+          }
           log(
             `recebido type=${b?.type ?? b?.category ?? '?'} from=${b?.from ? domainOf(bare(b.from)) : '?'} ` +
               `bot=${botSide ?? '?'} roteador=${md['#tunnel.owner'] ? bare(md['#tunnel.owner']) : '-'} ` +
