@@ -66,6 +66,8 @@ A ponte mantém o campo de conversa `atendimento` a partir de evidências da Bli
   Atualizam em tempo real: cada mudança de estado dispara `conversation.updated` e o painel refiltra.
 - Caixa com "reabrir conversa anterior" (`lock_to_single_conversation`): resposta do cliente reabre a mesma conversa.
 - Pesquisa de satisfação: nota 1-5 do cliente logo após o pedido vira `avaliacao` (+ `avaliacao_de` IA/Atendente).
+- `scripts/snooze-unknown.py`: conversas anteriores à ponte, sem informação de quem atende, recebem a etiqueta
+  `sem-historico-blip` e ficam adiadas até a próxima mensagem (pasta "Sem histórico (adiadas)").
 - `scripts/fix-duplicate-conversations.py`: encerra duplicadas antigas do mesmo cliente (idempotente).
 - Encerramento automático da conta: 24h (`auto_resolve_after=1440`, sem mensagem ao cliente).
 - `scripts/finalize-stale.py`: finaliza conversas antigas sem estado e inativas há mais de 24h (idempotente).
