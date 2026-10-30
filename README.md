@@ -47,6 +47,24 @@ HTTPS: Traefik do servidor, por labels no serviço `rails` (certresolver `le`). 
 - A ponte usa o token de usuário (CHATWOOT_USER_TOKEN) para achar contatos: se for regenerado, atualizar o `.env`
   e as variáveis do stack. Código montado de `blip-bridge/` (bind mount); para recarregar, forçar update do serviço.
 
+## Estado do atendimento (IA × humano)
+
+A ponte mantém o campo de conversa `atendimento` a partir de evidências da Blip e reflete no modelo nativo:
+
+| Evidência na Blip | Estado | No Chatwoot |
+|---|---|---|
+| mensagem do bot | IA | pendente, responsável = Agent Bot "Blip" (fora de "Não atribuídas") |
+| ticket da Blip Desk `Waiting`/`Transferred` | Aguardando atendente | aberta sem responsável (transferência nativa do bot) |
+| mensagem com `#messageEmitter=Human` (traz `#message.agentIdentity`) | Atendimento humano | aberta, atribuída ao atendente (criado automaticamente pelo e-mail da Blip) |
+| ticket `Closed*`, pedido de avaliação do bot, ou 24h sem atividade | Finalizado | resolvida (Histórico) |
+
+- Atributos auxiliares: `atendimento_desde`, `ia_inicio`, `transferido_em`, `humano_inicio`, `atendente_blip`,
+  `finalizado_por` (IA / Atendente / Inatividade), `finalizado_em`. Cada mudança gera uma nota privada "🔁 Atendimento: …".
+- Após "Finalizado", 30 min de fechamento: mensagens da pesquisa de satisfação não reabrem o atendimento.
+- Pastas (do usuário infra): Atendimentos IA, Aguardando atendente, Em atendimento humano (todas excluem resolvidas) e Histórico.
+- Encerramento automático da conta: 24h (`auto_resolve_after=1440`, sem mensagem ao cliente).
+- `scripts/finalize-stale.py`: finaliza conversas antigas sem estado e inativas há mais de 24h (idempotente).
+
 ## Operação
 
 - **Atualizar versão:** no Portainer → Stacks → chatwoot → Editor, trocar `CHATWOOT_IMAGE` nas variáveis

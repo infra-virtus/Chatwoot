@@ -1,7 +1,14 @@
-// Ponte Blip -> Chatwoot (espelho).
-// Recebe o Webhook da Blip e registra no Chatwoot as mensagens ENVIADAS pela Blip (bot e atendentes),
-// na conversa do cliente da caixa de entrada do WhatsApp. As mensagens entram com source_id, então o
-// Chatwoot NÃO as reenvia ao cliente: é só histórico.
+// Ponte Blip -> Chatwoot.
+// Recebe o Webhook da Blip (roteador wendellroteador) e:
+//  1. espelha no Chatwoot as mensagens ENVIADAS pela Blip (bot 🤖 e atendentes 👤), com source_id, então o
+//     Chatwoot NÃO as reenvia ao cliente;
+//  2. mantém o estado operacional da conversa (campo "atendimento"), a partir de evidências da Blip:
+//       mensagem do bot ................................. IA
+//       ticket da Blip Desk com status Waiting ............ Aguardando atendente (transferência IA -> humano)
+//       mensagem com #messageEmitter=Human ................. Atendimento humano (atribuída ao atendente)
+//       ticket encerrado / pedido de avaliação ............. Finalizado (conversa resolvida)
+//     e reflete no modelo nativo do Chatwoot: IA = pendente com o Agent Bot "Blip" responsável;
+//     aguardando = aberta sem responsável (aba "Não atribuídas"); humano = aberta atribuída ao atendente.
 // Formato do payload da Blip: ver /home/infra/blipdash/src/normalize/classify.ts.
 import http from 'node:http';
 
@@ -14,13 +21,25 @@ const env = (name) => {
 const CHATWOOT_URL = env('CHATWOOT_URL');
 const ACCOUNT_ID = env('CHATWOOT_ACCOUNT_ID');
 const INBOX_ID = Number(env('CHATWOOT_INBOX_ID'));
-const USER_TOKEN = env('CHATWOOT_USER_TOKEN'); // busca/criação de contato e conversa
-const BOT_TOKEN = env('CHATWOOT_BOT_TOKEN'); // mensagens assinadas pelo Agent Bot "Blip"
+const USER_TOKEN = env('CHATWOOT_USER_TOKEN'); // busca de contatos, criação de atendentes, atribuições
+const BOT_TOKEN = env('CHATWOOT_BOT_TOKEN'); // mensagens e mudanças de status feitas pelo Agent Bot "Blip"
+const BOT_ID = Number(env('CHATWOOT_BOT_ID'));
 const PATH_TOKEN = env('BLIP_WEBHOOK_PATH_TOKEN');
 const PORT = Number(process.env.PORT || 8080);
 
 const WEBHOOK_PATH = `/blip-webhook/${PATH_TOKEN}`;
 const SKIP_TYPES = new Set(['application/vnd.lime.chatstate+json', 'application/vnd.lime.notification+json']);
+const TICKET_TYPE = 'application/vnd.iris.ticket+json';
+const CLOSED_TICKET = /^Closed/; // ClosedAttendant, ClosedClient, ClosedClientInactivity
+// Mensagem do bot pedindo avaliação encerra o atendimento (regra definida com a operação)
+const SURVEY = /avalia(r|ção|cao)|nota de [01] a (5|10)|de 1 a 5|satisfa(ção|cao|ito)|como foi (o|seu) atendimento/i;
+
+const ESTADO = {
+  IA: 'IA',
+  AGUARDANDO: 'Aguardando atendente',
+  HUMANO: 'Atendimento humano',
+  FIM: 'Finalizado',
+};
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -29,6 +48,7 @@ const bare = (identity) => {
   return (i === -1 ? identity : identity.slice(0, i)).toLowerCase();
 };
 const domainOf = (identity) => identity.slice(identity.indexOf('@') + 1);
+const maskPhone = (digits) => `+${digits.slice(0, 4)}…${digits.slice(-4)}`;
 
 async function api(path, { method = 'GET', token = USER_TOKEN, body } = {}) {
   const res = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${ACCOUNT_ID}${path}`, {
@@ -61,12 +81,9 @@ function render(type, content) {
   return `[${type}]`;
 }
 
-// telefone (somente dígitos, como o wa_id da Meta) -> id da conversa no Chatwoot
-const conversationCache = new Map();
-const seen = new Set();
+// ---------- contato e conversa ----------
 
 // Celular BR: a Meta costuma mandar o wa_id SEM o 9 depois do DDD (12 dígitos) e a Blip COM o 9 (13).
-// Devolve as duas formas, a recebida primeiro.
 function phoneVariants(digits) {
   const variants = [digits];
   if (digits.startsWith('55') && digits.length === 13 && digits[4] === '9') variants.push(digits.slice(0, 4) + digits.slice(5));
@@ -76,25 +93,25 @@ function phoneVariants(digits) {
 
 async function findContact(digits) {
   const variants = phoneVariants(digits);
-  // busca pelos 8 dígitos finais, comuns às duas formas
   const search = await api(`/contacts/search?q=${digits.slice(-8)}&include_contact_inboxes=true`);
   const matches = (search.payload || []).filter((c) => variants.includes((c.phone_number || '').replace(/\D/g, '')));
   // prefere o contato que já tem conversa nesta caixa (o criado pelas mensagens da Meta)
   return matches.find((c) => c.contact_inboxes?.some((ci) => ci.inbox?.id === INBOX_ID)) || matches[0];
 }
 
+const conversationCache = new Map(); // telefone -> { id, expires }
+
 async function conversationFor(digits) {
   const cached = conversationCache.get(digits);
   if (cached && cached.expires > Date.now()) return cached.id;
 
   let contact = await findContact(digits);
-
   let sourceId = contact?.contact_inboxes?.find((ci) => ci.inbox?.id === INBOX_ID)?.source_id;
   if (!contact) {
     const created = await api('/contacts', { method: 'POST', body: { inbox_id: INBOX_ID, phone_number: `+${digits}`, name: `+${digits}` } });
     contact = created.payload.contact;
     sourceId = created.payload.contact_inbox?.source_id;
-    log(`contato criado +${digits} id=${contact.id}`);
+    log(`contato criado ${maskPhone(digits)} id=${contact.id}`);
   }
 
   const convs = await api(`/contacts/${contact.id}/conversations`);
@@ -108,27 +125,179 @@ async function conversationFor(digits) {
       sourceId = ci.source_id;
     }
     conv = await api('/conversations', { method: 'POST', body: { source_id: sourceId, inbox_id: INBOX_ID, contact_id: contact.id } });
-    log(`conversa criada id=${conv.id} para +${digits}`);
+    log(`conversa criada id=${conv.id} para ${maskPhone(digits)}`);
   }
 
   conversationCache.set(digits, { id: conv.id, expires: Date.now() + 10 * 60 * 1000 });
   return conv.id;
 }
 
+// ---------- atendentes ----------
+
+// "#message.agentIdentity" da Blip: "<e-mail com @ codificado>@blip.ai", ex.: "maria%40grupovirtus.com.br@blip.ai"
+function agentEmail(identity) {
+  if (!identity) return null;
+  const local = bare(identity).replace(/@blip\.ai$/, '');
+  const email = decodeURIComponent(local);
+  return email.includes('@') ? email : null;
+}
+
+const agentCache = new Map(); // e-mail -> id do usuário no Chatwoot
+
+async function agentIdFor(email) {
+  if (agentCache.has(email)) return agentCache.get(email);
+  const agents = await api('/agents');
+  for (const a of agents) agentCache.set(a.email.toLowerCase(), a.id);
+  if (!agentCache.has(email)) {
+    const name = email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const created = await api('/agents', { method: 'POST', body: { name, email, role: 'agent' } });
+    await api(`/inbox_members`, { method: 'POST', body: { inbox_id: INBOX_ID, user_ids: [created.id] } });
+    agentCache.set(email, created.id);
+    log(`atendente criado no Chatwoot id=${created.id} (${email.replace(/^(.).*@/, '$1***@')})`);
+  }
+  return agentCache.get(email);
+}
+
+// ---------- estado operacional ----------
+
+async function setEstado(conversationId, novo, motivo, extra = {}) {
+  const conv = await api(`/conversations/${conversationId}`);
+  const atual = conv.custom_attributes?.atendimento;
+  const agora = new Date().toISOString();
+  const attrs = { ...extra };
+  if (atual !== novo) {
+    attrs.atendimento = novo;
+    attrs.atendimento_desde = agora;
+    if (novo === ESTADO.IA && !conv.custom_attributes?.ia_inicio) attrs.ia_inicio = agora;
+    if (novo === ESTADO.AGUARDANDO) attrs.transferido_em = agora;
+    if (novo === ESTADO.HUMANO) attrs.humano_inicio = agora;
+  }
+  if (Object.keys(attrs).length) {
+    await api(`/conversations/${conversationId}/custom_attributes`, { method: 'POST', body: { custom_attributes: attrs, merge: true } });
+  }
+  if (atual !== novo) {
+    // Histórico da mudança, visível só para a equipe
+    await api(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      token: BOT_TOKEN,
+      body: { content: `🔁 Atendimento: ${atual || 'sem estado'} → ${novo} (${motivo})`, private: true },
+    });
+    log(`estado conversa ${conversationId}: ${atual || '-'} -> ${novo} (${motivo})`);
+  }
+  return conv;
+}
+
+async function setStatus(conv, status) {
+  if (conv.status === status) return;
+  // Pelo token do Agent Bot: pendente -> aberta vira "transferência do bot" nos relatórios nativos
+  await api(`/conversations/${conv.id}/toggle_status`, { method: 'POST', token: BOT_TOKEN, body: { status } });
+}
+
+async function aIA(conversationId, motivo) {
+  const conv = await setEstado(conversationId, ESTADO.IA, motivo);
+  // Atribuir ao Agent Bot já deixa a conversa "pendente" e fora de "Não atribuídas" (regra nativa)
+  if (conv.status !== 'pending' || conv.meta?.assignee_type !== 'AgentBot') {
+    await api(`/conversations/${conversationId}/assignments`, { method: 'POST', body: { assignee_id: BOT_ID, assignee_type: 'AgentBot' } });
+  }
+}
+
+async function aAguardando(conversationId, motivo) {
+  const conv = await setEstado(conversationId, ESTADO.AGUARDANDO, motivo);
+  // pendente -> aberta pelo token do bot = transferência nativa (limpa o bot e marca o início da espera)
+  await setStatus(conv, 'open');
+  if (conv.meta?.assignee && conv.meta?.assignee_type !== 'AgentBot') {
+    await api(`/conversations/${conversationId}/assignments`, { method: 'POST', body: { assignee_id: null } });
+  }
+}
+
+async function aHumano(conversationId, email, motivo) {
+  const conv = await setEstado(conversationId, ESTADO.HUMANO, motivo, email ? { atendente_blip: email } : {});
+  await setStatus(conv, 'open');
+  if (email) {
+    const userId = await agentIdFor(email);
+    if (conv.meta?.assignee?.id !== userId || conv.meta?.assignee_type === 'AgentBot') {
+      await api(`/conversations/${conversationId}/assignments`, { method: 'POST', body: { assignee_id: userId } });
+    }
+  }
+}
+
+async function aFinalizado(conversationId, por, motivo) {
+  const agora = new Date();
+  const conv = await setEstado(conversationId, ESTADO.FIM, motivo, { finalizado_por: por, finalizado_em: agora.toISOString() });
+  finalizadoEm.set(conversationId, agora.getTime());
+  await setStatus(conv, 'resolved');
+}
+
+// Último estado conhecido por conversa, para não consultar o Chatwoot a cada mensagem do bot
+const estadoCache = new Map(); // conversationId -> estado
+
+// Depois de um reinício a memória está vazia: o estado salvo na conversa é a referência.
+async function estadoAtual(conversationId) {
+  if (!estadoCache.has(conversationId)) {
+    const conv = await api(`/conversations/${conversationId}`);
+    const salvo = conv.status === 'resolved' ? ESTADO.FIM : conv.custom_attributes?.atendimento;
+    estadoCache.set(conversationId, salvo ?? null);
+  }
+  return estadoCache.get(conversationId);
+}
+
+// Janela após a finalização em que mensagens do bot (pesquisa de satisfação) não reabrem o atendimento
+const FECHAMENTO_MS = 30 * 60 * 1000;
+const finalizadoEm = new Map(); // conversationId -> timestamp
+
+async function dentroDoFechamento(conversationId) {
+  if (!finalizadoEm.has(conversationId)) {
+    const conv = await api(`/conversations/${conversationId}`);
+    finalizadoEm.set(conversationId, Date.parse(conv.custom_attributes?.finalizado_em || 0) || 0);
+  }
+  return Date.now() - finalizadoEm.get(conversationId) < FECHAMENTO_MS;
+}
+
+async function transition(conversationId, novo, fn) {
+  if ((await estadoAtual(conversationId)) === novo && novo !== ESTADO.HUMANO) return;
+  await fn();
+  estadoCache.set(conversationId, novo);
+}
+
+// ---------- processamento de cada item do Webhook ----------
+
+const seen = new Set();
+
+function customerDigits(msg) {
+  const md = msg.metadata || {};
+  const fromBot = domainOf(bare(msg.from)) === 'msging.net';
+  const contact = bare(md['#tunnel.originator'] || (fromBot ? msg.to : msg.from));
+  if (!contact.endsWith('@wa.gw.msging.net')) return null; // só WhatsApp
+  return contact.split('@')[0].replace(/\D/g, '') || null;
+}
+
 async function handle(msg) {
   if (!msg || typeof msg !== 'object' || !('type' in msg) || !msg.id || !msg.from || !msg.to) return;
   if (SKIP_TYPES.has(msg.type)) return;
-  if (domainOf(bare(msg.from)) !== 'msging.net') return; // só o que a Blip ENVIOU
-
-  const md = msg.metadata || {};
-  const contact = bare(md['#tunnel.originator'] || msg.to);
-  if (!contact.endsWith('@wa.gw.msging.net')) return; // só WhatsApp
-  const digits = contact.split('@')[0].replace(/\D/g, '');
+  const digits = customerDigits(msg);
   if (!digits) return;
+
+  // Ticket da Blip Desk: transferência para humano ou encerramento
+  if (msg.type === TICKET_TYPE) {
+    const t = msg.content || {};
+    const conversationId = await conversationFor(digits);
+    if (t.status === 'Waiting' || t.status === 'Transferred') {
+      await transition(conversationId, ESTADO.AGUARDANDO, () => aAguardando(conversationId, `ticket #${t.sequentialId} ${t.status} na Blip`));
+    } else if (t.status === 'Open' && t.agentIdentity) {
+      await transition(conversationId, ESTADO.HUMANO, () => aHumano(conversationId, agentEmail(t.agentIdentity), `ticket #${t.sequentialId} assumido`));
+    } else if (CLOSED_TICKET.test(t.status || '')) {
+      await transition(conversationId, ESTADO.FIM, () => aFinalizado(conversationId, 'Atendente', `ticket #${t.sequentialId} ${t.status}`));
+    }
+    log(`ticket #${t.sequentialId} ${t.status} -> conversa ${conversationId}`);
+    return;
+  }
+
+  if (domainOf(bare(msg.from)) !== 'msging.net') return; // daqui em diante: só o que a Blip ENVIOU
 
   const sourceId = `blip:${msg.id}`;
   if (seen.has(sourceId)) return;
 
+  const md = msg.metadata || {};
   const human = md['#messageEmitter'] === 'Human';
   const text = render(msg.type, msg.content);
   if (!text.trim()) return;
@@ -139,13 +308,37 @@ async function handle(msg) {
     token: BOT_TOKEN,
     body: { content: `${human ? '👤' : '🤖'} ${text}`, message_type: 'outgoing', source_id: sourceId },
   });
-
   seen.add(sourceId);
   if (seen.size > 5000) seen.delete(seen.values().next().value);
-  log(`espelhada ${human ? 'atendente' : 'bot'} -> conversa ${conversationId} (+${digits})`);
+  log(`espelhada ${human ? 'atendente' : 'bot'} -> conversa ${conversationId} (${maskPhone(digits)})`);
+
+  // Estado a partir da mensagem
+  if (human) {
+    const email = agentEmail(md['#message.agentIdentity']);
+    const ticket = md['#message.ticketId'] ? ' do ticket' : '';
+    await transition(conversationId, ESTADO.HUMANO, () => aHumano(conversationId, email, `mensagem do atendente${ticket}`));
+    return;
+  }
+  const atual = await estadoAtual(conversationId);
+  // A pesquisa de satisfação continua depois do pedido de avaliação (respostas, comentário, agradecimento):
+  // nesse intervalo a conversa segue finalizada e, se a resposta do cliente a reabriu, é encerrada de novo.
+  if (atual === ESTADO.FIM && (await dentroDoFechamento(conversationId))) {
+    const conv = await api(`/conversations/${conversationId}`);
+    await setStatus(conv, 'resolved');
+    return;
+  }
+  if (SURVEY.test(text)) {
+    const por = atual === ESTADO.HUMANO || atual === ESTADO.AGUARDANDO ? 'Atendente' : 'IA';
+    await transition(conversationId, ESTADO.FIM, () => aFinalizado(conversationId, por, 'pedido de avaliação'));
+    return;
+  }
+  // Na fila da Blip o bot ainda manda avisos ("aguarde..."): continua aguardando atendente.
+  if (atual === ESTADO.AGUARDANDO) return;
+  await transition(conversationId, ESTADO.IA, () =>
+    aIA(conversationId, atual === ESTADO.HUMANO ? 'bot voltou a responder após o atendente' : 'mensagem do bot'));
 }
 
-// Fila serial: evita criar a mesma conversa duas vezes quando chegam mensagens em sequência.
+// Fila serial: evita criar a mesma conversa duas vezes e aplica as transições na ordem de chegada.
 let queue = Promise.resolve();
 const enqueue = (item) => {
   queue = queue.then(() => handle(item)).catch((e) => log('ERRO', e.message));
@@ -164,27 +357,6 @@ http
       res.end('ok'); // responde já; processa em seguida
       try {
         const body = JSON.parse(raw);
-        for (const b of Array.isArray(body) ? body : [body]) {
-          const md = b?.metadata || {};
-          const botSide = [b?.from, b?.to].map((x) => (x ? bare(x) : '')).find((x) => domainOf(x) === 'msging.net');
-          // Diagnóstico: estrutura de tickets e de itens sem "type", sem dados pessoais
-          if (b?.type === 'application/vnd.iris.ticket+json') {
-            const t = b.content || {};
-            log(`ticket status=${t.status} team=${t.team ?? '-'} agente=${t.agentIdentity ? 'sim' : 'não'} ` +
-              `seq=${t.sequentialId ?? '-'} closedBy=${t.closedBy ? domainOf(bare(t.closedBy)) : '-'} tag=${(t.tags || []).length} ` +
-              `from=${domainOf(bare(b.from || ''))} to=${domainOf(bare(b.to || ''))} chaves=${Object.keys(t).join(',')}`);
-          } else if (md['#messageEmitter'] === 'Human') {
-            const agentKeys = Object.keys(md).filter((k) => /agent|desk|ticket|attendant|user/i.test(k));
-            log(`humano-meta chaves=${agentKeys.join(',') || '(nenhuma)'} temEmail=${agentKeys.some((k) => /@blip\.ai|%40/.test(String(md[k])))}`);
-          } else if (!b?.type) {
-            log(`sem-type chaves=${Object.keys(b || {}).join(',')} category=${b?.category ?? '-'} action=${String(b?.action ?? '-').slice(0, 40)}`);
-          }
-          log(
-            `recebido type=${b?.type ?? b?.category ?? '?'} from=${b?.from ? domainOf(bare(b.from)) : '?'} ` +
-              `bot=${botSide ?? '?'} roteador=${md['#tunnel.owner'] ? bare(md['#tunnel.owner']) : '-'} ` +
-              `canal=${domainOf(bare(md['#tunnel.originator'] || (domainOf(bare(b?.from || '')) === 'msging.net' ? b?.to : b?.from) || ''))} emitter=${md['#messageEmitter'] ?? '-'}`,
-          );
-        }
         (Array.isArray(body) ? body : [body]).forEach(enqueue);
       } catch {
         log('corpo inválido ignorado');
