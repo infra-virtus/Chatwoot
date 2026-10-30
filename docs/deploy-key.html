@@ -1,0 +1,79 @@
+<title>Deploy Key VisualChat</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: uma coluna estreita, a chave em destaque como o único objeto com borda */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --fg: #17201c; --muted: #5b6a63;
+  --line: #d3ddd8; --accent: #1f7a55; --accent-fg: #ffffff;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111714; --surface: #18201c; --fg: #e3ebe7; --muted: #94a69d;
+  --line: #2c3833; --accent: #4cc08c; --accent-fg: #0b130f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111714; --surface: #18201c; --fg: #e3ebe7; --muted: #94a69d;
+  --line: #2c3833; --accent: #4cc08c; --accent-fg: #0b130f; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 1rem; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 2.5rem; }
+main { max-width: 42rem; margin: 0 auto; display: grid; gap: 1.75rem; }
+h1 { font-size: 1.6rem; margin: 0; text-wrap: balance; }
+.lead { margin: .4rem 0 0; color: var(--muted); }
+.label { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.key { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; display: grid; gap: .75rem; }
+.key pre { margin: 0; font-family: var(--mono); font-size: .9rem; white-space: pre-wrap; word-break: break-all; user-select: all; }
+button { justify-self: start; font: 600 .95rem var(--sans); background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 8px; padding: .6rem 1.1rem; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+.status { font-size: .9rem; color: var(--accent); min-height: 1.4em; }
+.fp { font-family: var(--mono); font-size: .9rem; word-break: break-all; }
+ol { margin: 0; padding-left: 1.3rem; display: grid; gap: .5rem; }
+code { font-family: var(--mono); font-size: .9em; }
+</style>
+
+<main>
+  <header>
+    <h1>Chave de acesso do servidor ao GitHub</h1>
+    <p class="lead">Chave pública do servidor do Chatwoot (VisualChat) para o repositório <code>infra-virtus/Chatwoot</code>. Ela não é secreta: sozinha, não dá acesso a nada.</p>
+  </header>
+
+  <section class="key" aria-labelledby="k">
+    <span class="label" id="k">Chave pública (cole inteira no campo "Key")</span>
+    <pre id="pubkey">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMDRLzo4JFBoXTIOmGo1Tb6168ImCSeszHsB8dbJd+zu deploy-chatwoot@docker-opensource</pre>
+    <button id="copy" type="button">Copiar chave</button>
+    <span class="status" id="status" aria-live="polite"></span>
+  </section>
+
+  <section>
+    <span class="label">Impressão digital que o GitHub deve mostrar</span>
+    <p class="fp">SHA256:h3UF21RhZ2OIhxHRGDzW5AqynAtmZQ1IfUWzBflEfk4</p>
+  </section>
+
+  <section>
+    <span class="label">Passos</span>
+    <ol>
+      <li>Abra <a href="https://github.com/infra-virtus/Chatwoot/settings/keys">Settings → Deploy keys</a> do repositório e apague a chave "Claude".</li>
+      <li>Clique em <strong>Add deploy key</strong>. Title: <code>servidor docker-opensource</code>.</li>
+      <li>Clique em <strong>Copiar chave</strong> acima e cole no campo <strong>Key</strong>.</li>
+      <li>Marque <strong>Allow write access</strong> e clique em <strong>Add key</strong>.</li>
+      <li>Confira se a impressão digital na lista é igual à desta página.</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+const btn = document.getElementById('copy');
+const status = document.getElementById('status');
+const text = document.getElementById('pubkey').textContent.trim();
+btn.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(text);
+    status.textContent = 'Chave copiada. Cole no campo "Key" do GitHub.';
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById('pubkey'));
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    status.textContent = 'A chave está selecionada. Use Ctrl+C (ou Cmd+C) para copiar.';
+  }
+});
+</script>
