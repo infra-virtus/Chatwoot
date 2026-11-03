@@ -25,7 +25,7 @@ Antes de 2026-10-30 18h (UTC) não há marcos de estado: comparar períodos só 
 | Atendimentos ao vivo IA / humano | conversas com `atendimento` = IA ou Atendimento humano e status ≠ resolvida | ✅ pastas "Ao vivo IA" e "Ao vivo humano" |
 | Fila aguardando atendente | `atendimento` = Aguardando atendente e status ≠ resolvida | ✅ pasta + aba "Não atribuídas" |
 | Tempo de espera na fila (TME) | `humano_inicio − transferido_em` (mediana e p90) | ⚠️ calculado só por consulta; não existe tela |
-| Tempo da 1ª resposta humana (FRT) | 1ª mensagem 👤 − `transferido_em` | ❌ relatório nativo vazio (respostas entram pelo bot) |
+| Tempo da 1ª resposta humana (FRT) | 1ª mensagem 👤 − transferência | ✅ nativo desde 2026-11-03 16h14 UTC (respostas em nome do atendente) |
 | Conversas por atendente (carga) | conversas com responsável = atendente, abertas | ✅ nativo (responsável atual) |
 | Abandono na fila | transferidas e finalizadas sem `humano_inicio` ÷ transferidas | ❌ não existe tela (dado disponível) |
 | Volume por hora (pico) | mensagens/conversas do cliente por hora local | ⚠️ nativo por dia; sem mapa de calor |
@@ -36,9 +36,9 @@ Antes de 2026-10-30 18h (UTC) não há marcos de estado: comparar períodos só 
 |---|---|---|
 | Atendimentos recebidos | conversas criadas no período (ou com `ia_inicio` no período) | ✅ nativo (conversas criadas) |
 | Taxa de transferência IA → humano | conversas com `transferido_em` ÷ conversas com `ia_inicio` | ⚠️ nativo conta só a 1ª transferência por conversa |
-| Contenção da IA (resolvidas só pela IA) | finalizadas sem `transferido_em` ÷ conversas com `ia_inicio` | ❌ nativo "resolvidas pelo bot" = 0 (caixa sem bot ativo) |
+| Contenção da IA (resolvidas só pela IA) | finalizadas sem `transferido_em` ÷ conversas com `ia_inicio` | ✅ nativo (bot ligado à caixa em 2026-11-03) — vale para conversas novas |
 | TMA humano | `finalizado_em − humano_inicio` (só finalizadas por atendente) | ❌ sem tela; nativo mede desde a criação da conversa |
-| CSAT (geral, IA, atendente) | média e % de notas 4–5 em `avaliacao` | ⚠️ dado gravado; relatório nativo de CSAT vazio |
+| CSAT (geral, IA, atendente) | média e % de notas 4–5 em `avaliacao` | ✅ nativo (notas da Blip registradas no CSAT do Chatwoot; 26 históricas importadas) |
 | Resoluções por atendente | conversas resolvidas com o atendente responsável | ✅ nativo |
 | Recontato / reabertura | conversas reabertas em até 7 dias ÷ finalizadas | ❌ não medido |
 
@@ -52,14 +52,14 @@ Recebidos, contenção da IA, taxa de transferência, CSAT, TME p90 e abandono �
 |---|---|---|
 | Conversas, mensagens recebidas | correto | dados nativos |
 | Mensagens enviadas | número certo, sem separar bot × humano | tudo entra pelo bot "Blip" |
-| Tempo de 1ª resposta, tempo de resposta | **vazio** | exigem mensagem enviada por um usuário |
-| Mensagens por atendente | **vazio** | idem |
+| Tempo de 1ª resposta, tempo de resposta | ✅ desde 2026-11-03 | respostas do atendente entram em nome dele (tokens via scripts/refresh-agent-tokens.sh) |
+| Mensagens por atendente | ✅ desde 2026-11-03 | idem |
 | Resoluções / por atendente | correto (responsável no momento de resolver) | evento de resolução |
 | Tempo de resolução | **inflado** | conta desde a criação da conversa, inclui IA e até 24h de inatividade |
 | Transferências do bot | parcial | só a 1ª por conversa |
-| Resolvidas pelo bot / painel de Bot | **0** | a caixa não tem bot ativo |
-| "Sem resposta" (unattended) | **errado** | conta todas as abertas |
-| CSAT nativo | **vazio** | a pesquisa é da Blip |
+| Resolvidas pelo bot / painel de Bot | ✅ para conversas novas | bot "Blip" ligado à caixa |
+| "Sem resposta" (unattended) | ✅ para conversas novas | a 1ª resposta do atendente agora é registrada |
+| CSAT nativo | ✅ | notas da pesquisa da Blip registradas pela ponte |
 | Horário comercial | não configurado | expediente da caixa desligado |
 
 ## Regras de qualidade (validate-data)

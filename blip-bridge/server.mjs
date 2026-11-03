@@ -12,6 +12,7 @@
 // Formato do payload da Blip: ver /home/infra/blipdash/src/normalize/classify.ts.
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const env = (name) => {
   const v = process.env[name];
@@ -143,6 +144,21 @@ async function findContact(digits) {
 }
 
 const conversationCache = new Map(); // telefone -> { id, expires }
+
+// Tokens dos atendentes ({"email": "token"}), gerados por scripts/refresh-agent-tokens.sh e montados só leitura.
+// Com eles a resposta do atendente entra em nome dele: relatórios nativos de 1ª resposta, tempo de resposta e
+// produtividade passam a contar. Sem token (atendente novo), a mensagem entra pelo bot e o log avisa.
+const AGENT_TOKENS_FILE = process.env.AGENT_TOKENS_FILE || '/run/secrets/bridge/agent-tokens.json';
+let agentTokens = {};
+function loadAgentTokens() {
+  try {
+    agentTokens = JSON.parse(readFileSync(AGENT_TOKENS_FILE, 'utf8'));
+  } catch (e) {
+    log(`tokens de atendentes indisponíveis: ${e.code || e.message}`);
+  }
+}
+loadAgentTokens();
+setInterval(loadAgentTokens, 5 * 60 * 1000).unref();
 
 async function conversationFor(digits) {
   const cached = conversationCache.get(digits);
@@ -318,6 +334,26 @@ async function transition(conversationId, novo, fn) {
   estadoCache.set(conversationId, novo);
 }
 
+// CSAT nativo do Chatwoot: a nota da pesquisa da Blip vira uma resposta de satisfação (relatório de CSAT,
+// atribuída ao responsável atual da conversa). Cria a mensagem de pesquisa com source_id (não é enviada ao
+// cliente) e registra a nota pelo endpoint público da pesquisa, o mesmo usado pela página de avaliação.
+async function registrarCsatNativo(conv, nota) {
+  const msgs = (await api(`/conversations/${conv.id}/messages`)).payload || [];
+  if (!msgs.some((m) => m.content_type === 'input_csat')) {
+    await api(`/conversations/${conv.id}/messages`, {
+      method: 'POST',
+      token: BOT_TOKEN,
+      body: { content: 'Pesquisa de satisfação (Blip)', content_type: 'input_csat', message_type: 'template', source_id: `blip-csat:${conv.id}` },
+    });
+  }
+  const res = await fetch(`${CHATWOOT_URL}/public/api/v1/csat_survey/${conv.uuid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: { submitted_values: { csat_survey_response: { rating: nota, feedback_message: '' } } } }),
+  });
+  if (!res.ok) throw new Error(`CSAT nativo conversa ${conv.id} -> HTTP ${res.status}`);
+}
+
 // ---------- processamento de cada item do Webhook ----------
 
 const seen = new Set();
@@ -369,6 +405,7 @@ async function handle(msg) {
     await api(`/conversations/${conversationId}/messages`, {
       method: 'POST', token: BOT_TOKEN, body: { content: `⭐ Avaliação do cliente: ${nota[1]}/5 (${de})`, private: true },
     });
+    await registrarCsatNativo(conv, Number(nota[1]));
     log(`avaliação ${nota[1]} (${de}) -> conversa ${conversationId}`);
     return;
   }
@@ -382,9 +419,12 @@ async function handle(msg) {
   if (!text.trim()) return;
 
   const conversationId = await conversationFor(digits);
+  const email = human ? agentEmail(md['#message.agentIdentity']) : null;
+  const senderToken = (email && agentTokens[email]) || BOT_TOKEN;
+  if (human && senderToken === BOT_TOKEN) log(`resposta de atendente sem token (${email ? 'rodar refresh-agent-tokens' : 'sem e-mail'}): entra pelo bot`);
   await api(`/conversations/${conversationId}/messages`, {
     method: 'POST',
-    token: BOT_TOKEN,
+    token: senderToken,
     body: { content: `${human ? '👤' : '🤖'} ${text}`, message_type: 'outgoing', source_id: sourceId },
   });
   seen.add(sourceId);
@@ -393,7 +433,6 @@ async function handle(msg) {
 
   // Estado a partir da mensagem
   if (human) {
-    const email = agentEmail(md['#message.agentIdentity']);
     const ticket = md['#message.ticketId'] ? ' do ticket' : '';
     await transition(conversationId, ESTADO.HUMANO, () => aHumano(conversationId, email, `mensagem do atendente${ticket}`));
     return;

@@ -96,6 +96,7 @@ services:
       PORT: '8080'
     volumes:
       - /home/infra/deploy/chatwoot/blip-bridge:/app:ro
+      - /home/infra/.secrets/bridge:/run/secrets/bridge:ro # tokens dos atendentes (scripts/refresh-agent-tokens.sh)
     networks:
       - internal
       - traefik_public
