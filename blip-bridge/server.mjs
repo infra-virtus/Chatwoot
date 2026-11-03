@@ -602,7 +602,7 @@ async function rotaPainel(req, res) {
   if (url.pathname === '/painel-ia/app.js') return enviar(200, readFileSync(new URL('app.js', PAINEL_DIR)), 'text/javascript; charset=utf-8');
 
   const usuario = await usuarioDaSessao(req);
-  if (!usuario) return enviar(401, { erro: 'Entre no Chatwoot para ver o painel.' });
+  if (!usuario) return enviar(401, { erro: 'Entre no Atendimento Wendell para ver o painel.' });
   const email = String(usuario.email || '').toLowerCase();
   if (!PAINEL_EMAILS.includes(email)) {
     log(`painel: acesso negado (${email.replace(/^(.).*@/, '$1***@')})`);
@@ -664,6 +664,18 @@ async function varredura() {
       body: { custom_attributes: { atendimento: ESTADO.FIM, finalizado_por: 'Inatividade', finalizado_em: ts, atendimento_desde: ts }, merge: true },
     });
     estadoCache.set(c.id, ESTADO.FIM);
+    sincronizadas++;
+  }
+  // Finalizadas que reabriram (cliente respondeu depois da pesquisa) e ninguém retomou: volta a resolver
+  const reabertas = await api('/conversations/filter?page=1', {
+    method: 'POST',
+    body: { payload: [
+      { attribute_key: 'atendimento', filter_operator: 'equal_to', values: [ESTADO.FIM], query_operator: 'and' },
+      { attribute_key: 'status', filter_operator: 'equal_to', values: ['open', 'pending'], query_operator: null },
+    ] },
+  });
+  for (const c of (reabertas.payload || []).filter((c) => c.last_activity_at < Date.now() / 1000 - FECHAMENTO_MS / 1000)) {
+    await setStatus(c, 'resolved');
     sincronizadas++;
   }
   if (finalizadas || sincronizadas) log(`varredura: IA inativas finalizadas=${finalizadas} estados sincronizados=${sincronizadas}`);
