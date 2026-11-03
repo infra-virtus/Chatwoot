@@ -213,10 +213,16 @@ async function agentIdFor(email) {
 
 // ---------- estado operacional ----------
 
+// Horário real do evento na Blip (#envelope.storageDate / storageDate do ticket). A Blip pode atrasar a
+// entrega do webhook (já houve 25 min); os tempos de espera e de atendimento usam a hora da Blip, não a de chegada.
+// A fila é serial: um item por vez, então uma variável basta.
+let eventoEm = Date.now();
+const eventoIso = () => new Date(eventoEm).toISOString();
+
 async function setEstado(conversationId, novo, motivo, extra = {}) {
   const conv = await api(`/conversations/${conversationId}`);
   const atual = conv.custom_attributes?.atendimento;
-  const agora = new Date().toISOString();
+  const agora = eventoIso();
   const attrs = { ...extra };
   if (atual !== novo) {
     attrs.atendimento = novo;
@@ -275,9 +281,9 @@ async function aHumano(conversationId, email, motivo) {
 }
 
 async function aFinalizado(conversationId, por, motivo) {
-  const agora = new Date();
+  const agora = new Date(eventoEm);
   const conv = await setEstado(conversationId, ESTADO.FIM, motivo, { finalizado_por: por, finalizado_em: agora.toISOString() });
-  finalizadoEm.set(conversationId, agora.getTime());
+  finalizadoEm.set(conversationId, Date.now()); // janela da pesquisa conta da chegada
   await setStatus(conv, 'resolved');
 }
 
@@ -327,6 +333,8 @@ function customerDigits(msg) {
 async function handle(msg) {
   if (!msg || typeof msg !== 'object' || !('type' in msg) || !msg.id || !msg.from || !msg.to) return;
   if (SKIP_TYPES.has(msg.type)) return;
+  const quando = Date.parse(msg.metadata?.['#envelope.storageDate'] || msg.content?.storageDate || '');
+  eventoEm = Number.isFinite(quando) && quando <= Date.now() + 60_000 ? quando : Date.now();
   const digits = customerDigits(msg);
   if (!digits) return;
 
@@ -422,6 +430,46 @@ const enqueue = (item) => {
     log('ERRO', e.message);
   });
 };
+
+// Varredura a cada 10 min (entra na mesma fila serial):
+//  - conversas da IA (pendentes) sem atividade há 24h: o encerramento automático do Chatwoot só pega as abertas;
+//  - conversas resolvidas pelo encerramento automático com estado desatualizado: grava "Finalizado (Inatividade)".
+async function varredura() {
+  const limite = Date.now() / 1000 - 24 * 3600;
+  let finalizadas = 0;
+  let sincronizadas = 0;
+  for (let page = 1; page <= 20; page++) {
+    const batch = (await api(`/conversations?inbox_id=${INBOX_ID}&status=pending&assignee_type=all&page=${page}`)).data.payload;
+    if (!batch.length) break;
+    for (const c of batch.filter((c) => c.last_activity_at < limite)) {
+      eventoEm = Date.now();
+      await aFinalizado(c.id, 'Inatividade', '24h sem atividade');
+      estadoCache.set(c.id, ESTADO.FIM);
+      finalizadas++;
+    }
+  }
+  const ativos = [ESTADO.IA, ESTADO.AGUARDANDO, ESTADO.HUMANO];
+  const res = await api('/conversations/filter?page=1', {
+    method: 'POST',
+    body: { payload: [
+      { attribute_key: 'atendimento', filter_operator: 'equal_to', values: ativos, query_operator: 'and' },
+      { attribute_key: 'status', filter_operator: 'equal_to', values: ['resolved'], query_operator: null },
+    ] },
+  });
+  for (const c of res.payload || []) {
+    const ts = new Date((c.last_activity_at || Date.now() / 1000) * 1000).toISOString();
+    await api(`/conversations/${c.id}/custom_attributes`, {
+      method: 'POST',
+      body: { custom_attributes: { atendimento: ESTADO.FIM, finalizado_por: 'Inatividade', finalizado_em: ts, atendimento_desde: ts }, merge: true },
+    });
+    estadoCache.set(c.id, ESTADO.FIM);
+    sincronizadas++;
+  }
+  if (finalizadas || sincronizadas) log(`varredura: IA inativas finalizadas=${finalizadas} estados sincronizados=${sincronizadas}`);
+}
+setInterval(() => {
+  queue = queue.then(varredura).catch((e) => log('ERRO varredura', e.message));
+}, 10 * 60 * 1000).unref();
 
 // Resumo periódico (só contagens) para monitorar se a Blip continua enviando
 setInterval(() => {
