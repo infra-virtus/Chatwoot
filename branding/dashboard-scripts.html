@@ -253,3 +253,17 @@
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+
+<!-- Ícone da aba: remove os ícones padrão do Chatwoot (favicon-*, apple/android-icon) e deixa só o logo da instalação -->
+<script id="virtus-favicon-script">
+(function () {
+  var nosso = window.globalConfig && window.globalConfig.LOGO_THUMBNAIL;
+  if (!nosso) return;
+  document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="shortcut icon"]').forEach(function (l) { l.remove(); });
+  var link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/svg+xml';
+  link.href = nosso;
+  document.head.appendChild(link);
+})();
+</script>
