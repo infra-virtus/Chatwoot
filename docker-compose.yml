@@ -93,7 +93,7 @@ services:
       CHATWOOT_BOT_ID: '1'
       BLIP_WEBHOOK_PATH_TOKEN: ${BLIP_WEBHOOK_PATH_TOKEN}
       ALLOWED_AGENT_DOMAINS: grupovirtus.com.br
-      DASHBOARD_ALLOWED_EMAILS: infra@grupovirtus.com.br # quem vê o Dashboard IA (separar por vírgula)
+      DASHBOARD_ALLOWED_EMAILS: infra@grupovirtus.com.br,murilo.goncalves@grupovirtus.com.br # quem vê o Dashboard IA (separar por vírgula)
       PORT: '8080'
     volumes:
       - /home/infra/deploy/chatwoot/blip-bridge:/app:ro
