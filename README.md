@@ -82,7 +82,7 @@ O atendimento ao cliente é feito na Blip; o Chatwoot só acompanha.
 - **Tela:** `branding/dashboard-scripts.html` deixa a caixa de resposta sempre em "Mensagem Privada" e esconde "Responder".
 - A ponte refaz chamadas ao Chatwoot por até ~3 min quando ele está reiniciando (não perde mensagens da Blip).
 
-## Dashboard IA (/painel-ia)
+## Dashboard de Atendimento (/painel-ia) — abas IA e Humano
 
 - Servido pela ponte (`blip-bridge/painel/`: `index.html`, `app.js`, `kpis.mjs` + `kpis.test.mjs`), no mesmo endereço do
   Chatwoot (Traefik envia `/painel-ia` para a ponte). Abre pelo ícone de gráfico ao lado do nome da conta.

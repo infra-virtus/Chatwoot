@@ -24,11 +24,13 @@ Antes de 2026-10-30 18h (UTC) não há marcos de estado: comparar períodos só 
 |---|---|---|
 | Atendimentos ao vivo IA / humano | conversas com `atendimento` = IA ou Atendimento humano e status ≠ resolvida | ✅ pastas "Ao vivo IA" e "Ao vivo humano" |
 | Fila aguardando atendente | `atendimento` = Aguardando atendente e status ≠ resolvida | ✅ pasta + aba "Não atribuídas" |
-| Tempo de espera na fila (TME) | `humano_inicio − transferido_em` (mediana e p90) | ⚠️ calculado só por consulta; não existe tela |
+| **Tempo de 1ª resposta (SLA)** | `primeira_resposta_em − transferido_em` (mediana e p90) | ✅ Dashboard, aba Humano (destaque) |
+| % respondidos na meta | respondidos em até `SLA_RESPOSTA_MIN` (padrão 15 min) ÷ (respondidos + encerrados sem resposta) | ✅ Dashboard, aba Humano |
+| Na fila acima da meta (agora) | fila com `agora − transferido_em` > meta | ✅ Dashboard, aba Humano |
 | Tempo da 1ª resposta humana (FRT) | 1ª mensagem 👤 − transferência | ✅ nativo desde 2026-11-03 16h14 UTC (respostas em nome do atendente) |
 | Conversas por atendente (carga) | conversas com responsável = atendente, abertas | ✅ nativo (responsável atual) |
-| Abandono na fila | transferidas e finalizadas sem `humano_inicio` ÷ transferidas | ❌ não existe tela (dado disponível) |
-| Volume por hora (pico) | mensagens/conversas do cliente por hora local | ⚠️ nativo por dia; sem mapa de calor |
+| Abandono na fila | transferidas e finalizadas sem `humano_inicio` ÷ transferidas finalizadas | ✅ Dashboard, aba Humano |
+| Volume por hora (pico) | atendimentos / transferências por dia da semana × hora | ✅ mapas de calor nas abas IA e Humano |
 
 ### Tático — gerente (semana / mês)
 
@@ -37,7 +39,7 @@ Antes de 2026-10-30 18h (UTC) não há marcos de estado: comparar períodos só 
 | Atendimentos recebidos | conversas criadas no período (ou com `ia_inicio` no período) | ✅ nativo (conversas criadas) |
 | Taxa de transferência IA → humano | conversas com `transferido_em` ÷ conversas com `ia_inicio` | ⚠️ nativo conta só a 1ª transferência por conversa |
 | Contenção da IA (resolvidas só pela IA) | finalizadas sem `transferido_em` ÷ conversas com `ia_inicio` | ✅ nativo (bot ligado à caixa em 2026-11-03) — vale para conversas novas |
-| TMA humano | `finalizado_em − humano_inicio` (só finalizadas por atendente) | ❌ sem tela; nativo mede desde a criação da conversa |
+| TMA humano | `finalizado_em − humano_inicio` (só finalizadas por atendente) | ✅ Dashboard, aba Humano |
 | CSAT (geral, IA, atendente) | média e % de notas 4–5 em `avaliacao` | ✅ nativo (notas da Blip registradas no CSAT do Chatwoot; 26 históricas importadas) |
 | Resoluções por atendente | conversas resolvidas com o atendente responsável | ✅ nativo |
 | Recontato / reabertura | conversas reabertas em até 7 dias ÷ finalizadas | ❌ não medido |
@@ -45,6 +47,17 @@ Antes de 2026-10-30 18h (UTC) não há marcos de estado: comparar períodos só 
 ### Estratégico — head (mês / trimestre)
 
 Recebidos, contenção da IA, taxa de transferência, CSAT, TME p90 e abandono — com tendência mês a mês e meta.
+
+## SLA de 1ª resposta
+
+- `transferido_em`: ticket da Blip entrando na fila (Waiting/Transferred); recomeça a cada nova transferência.
+- `primeira_resposta_em`: 1ª mensagem 👤 do atendente no ciclo (hora da Blip), gravada pela ponte desde 2026-11-03;
+  histórico desde 30/10 preenchido por `scripts/backfill-primeira-resposta.py` (hora de chegada no Chatwoot).
+- Na prática coincide com `humano_inicio` (a Blip só envia eventos de mensagem), mas o campo próprio mantém o SLA
+  correto se o webhook passar a receber "ticket assumido".
+- Meta: `SLA_RESPOSTA_MIN` no serviço da ponte (padrão 15). Conta 24h por dia: transferências fora do expediente
+  e em feriados (ex.: 02/11) entram com a espera real até o dia seguinte.
+- Cada número do Dashboard tem um ícone ⓘ com a definição, a conta com os valores do período e a fonte.
 
 ## Situação dos relatórios nativos do Chatwoot neste arranjo
 

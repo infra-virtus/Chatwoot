@@ -32,6 +32,7 @@ export function ciclosDaConversa(conv) {
     ia_inicio: ca.ia_inicio, transferido_em: ca.transferido_em, humano_inicio: ca.humano_inicio,
     atendente_blip: ca.atendente_blip, finalizado_em: ca.finalizado_em, finalizado_por: ca.finalizado_por,
     avaliacao: ca.avaliacao, avaliacao_de: ca.avaliacao_de, avaliacao_em: ca.avaliacao_em,
+    primeira_resposta_em: ca.primeira_resposta_em,
   };
   const temAtual = atual.ia_inicio || atual.transferido_em || atual.humano_inicio;
   const ultimo = lista[lista.length - 1];
@@ -42,8 +43,11 @@ export function ciclosDaConversa(conv) {
     .filter((c) => Number.isFinite(c.inicio));
 }
 
-// de / ate: 'AAAA-MM-DD' (inclusive), no fuso de São Paulo.
-export function calcularKpis(conversas, de, ate) {
+// Faixas do tempo de 1ª resposta (minutos) para o histograma do SLA
+const FAIXAS = [[0, 5, 'até 5 min'], [5, 15, '5–15 min'], [15, 30, '15–30 min'], [30, 60, '30–60 min'], [60, 120, '1–2 h'], [120, Infinity, 'mais de 2 h']];
+
+// de / ate: 'AAAA-MM-DD' (inclusive), no fuso de São Paulo. metaMin: meta do SLA de 1ª resposta.
+export function calcularKpis(conversas, de, ate, metaMin = 15) {
   const dentro = (ms) => Number.isFinite(ms) && dataLocal(ms) >= de && dataLocal(ms) <= ate;
   const ciclos = conversas.flatMap(ciclosDaConversa).filter((c) => dentro(c.inicio));
 
@@ -58,6 +62,14 @@ export function calcularKpis(conversas, de, ate) {
     .map((c) => minutos(c.transferido_em, c.humano_inicio));
   const tmaHumano = finalizados.filter((c) => c.humano_inicio && c.finalizado_por === 'Atendente' && t(c.finalizado_em) >= t(c.humano_inicio))
     .map((c) => minutos(c.humano_inicio, c.finalizado_em));
+
+  // SLA de 1ª resposta: transferência -> 1ª mensagem do atendente no ciclo
+  const respondidos = transferidos.filter((c) => c.primeira_resposta_em && t(c.primeira_resposta_em) >= t(c.transferido_em));
+  const tResp = (c) => minutos(c.transferido_em, c.primeira_resposta_em);
+  const primeiraResposta = respondidos.map(tResp);
+  const semResposta = finTransferidos.filter((c) => !respondidos.includes(c));
+  const slaMeta = taxa(primeiraResposta.filter((m) => m <= metaMin).length, respondidos.length + semResposta.length);
+  const naMeta = (lista) => taxa(lista.filter((c) => tResp(c) <= metaMin).length, lista.length);
 
   const avaliados = ciclos.filter((c) => c.avaliacao != null);
   const csat = (lista) => ({
@@ -79,6 +91,8 @@ export function calcularKpis(conversas, de, ate) {
       transferidos: doDia.filter((c) => c.transferido_em).length,
       finalizados_ia: fin.filter((c) => c.ia_inicio && !c.transferido_em).length,
       finalizados_humano: fin.filter((c) => c.humano_inicio).length,
+      resposta_mediana: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.5),
+      resposta_p90: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.9),
     };
   });
 
@@ -89,11 +103,19 @@ export function calcularKpis(conversas, de, ate) {
     calor[dia][hora]++;
   }
 
+  // Transferências por dia da semana x hora (picos de fila)
+  const calorFila = Array.from({ length: 7 }, () => Array(24).fill(0));
+  for (const c of transferidos) {
+    const { dia, hora } = horaLocal(t(c.transferido_em));
+    calorFila[dia][hora]++;
+  }
+
   // Por atendente
   const porAtendente = new Map();
   for (const c of ciclos.filter((x) => x.atendente_blip && x.humano_inicio)) {
-    const a = porAtendente.get(c.atendente_blip) || { atendente: c.atendente_blip, atendimentos: 0, espera: [], tma: [], notas: [] };
+    const a = porAtendente.get(c.atendente_blip) || { atendente: c.atendente_blip, atendimentos: 0, espera: [], tma: [], notas: [], respondidos: [] };
     a.atendimentos++;
+    if (respondidos.includes(c)) a.respondidos.push(c);
     if (c.transferido_em && t(c.humano_inicio) >= t(c.transferido_em)) a.espera.push(minutos(c.transferido_em, c.humano_inicio));
     if (c.finalizado_em && c.finalizado_por === 'Atendente') a.tma.push(minutos(c.humano_inicio, c.finalizado_em));
     if (c.avaliacao != null) a.notas.push(Number(c.avaliacao));
@@ -104,6 +126,8 @@ export function calcularKpis(conversas, de, ate) {
       atendente: a.atendente,
       atendimentos: a.atendimentos,
       espera_mediana: quantil(a.espera, 0.5),
+      resposta_mediana: quantil(a.respondidos.map(tResp), 0.5),
+      resposta_na_meta: naMeta(a.respondidos),
       tma_mediana: quantil(a.tma, 0.5),
       csat_media: a.notas.length ? a.notas.reduce((s, n) => s + n, 0) / a.notas.length : null,
       csat_n: a.notas.length,
@@ -118,6 +142,17 @@ export function calcularKpis(conversas, de, ate) {
     contencao_ia: taxa(finComIa.filter((c) => !c.transferido_em).length, finComIa.length),
     abandono_fila: taxa(finTransferidos.filter((c) => !c.humano_inicio).length, finTransferidos.length),
     espera_fila_min: resumoTempo(esperaFila),
+    sla: {
+      meta_min: metaMin,
+      primeira_resposta_min: resumoTempo(primeiraResposta),
+      na_meta: slaMeta,
+      transferidos: transferidos.length,
+      respondidos: respondidos.length,
+      sem_resposta: semResposta.length,
+      aguardando_resposta: transferidos.length - respondidos.length - semResposta.length,
+      faixas: FAIXAS.map(([a, b, rotulo]) => ({ rotulo, n: primeiraResposta.filter((m) => (a === 0 || m > a) && m <= b).length })),
+    },
+    calor_fila: calorFila,
     tma_humano_min: resumoTempo(tmaHumano),
     csat: { geral: csat(avaliados), ia: csat(avaliados.filter((c) => c.avaliacao_de === 'IA')), atendente: csat(avaliados.filter((c) => c.avaliacao_de === 'Atendente')) },
     serie,

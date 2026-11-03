@@ -190,14 +190,14 @@
   btn.id = 'virtus-painel-btn';
   btn.setAttribute('role', 'button');
   btn.tabIndex = 0;
-  btn.title = 'Dashboard IA';
-  btn.setAttribute('aria-label', 'Abrir Dashboard IA');
+  btn.title = 'Dashboard de Atendimento';
+  btn.setAttribute('aria-label', 'Abrir Dashboard de Atendimento');
   btn.innerHTML = ICONE;
 
   var overlay = document.createElement('div');
   overlay.id = 'virtus-painel-overlay';
   overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-label', 'Dashboard IA');
+  overlay.setAttribute('aria-label', 'Dashboard de Atendimento');
   var fechar = document.createElement('button');
   fechar.id = 'virtus-painel-fechar';
   fechar.type = 'button';
@@ -215,7 +215,7 @@
     var antigo = overlay.querySelector('iframe');
     if (antigo) antigo.remove();
     var frame = document.createElement('iframe');
-    frame.title = 'Dashboard IA';
+    frame.title = 'Dashboard de Atendimento';
     frame.src = '/painel-ia/?tema=' + tema();
     overlay.appendChild(frame);
     overlay.classList.add('aberto');

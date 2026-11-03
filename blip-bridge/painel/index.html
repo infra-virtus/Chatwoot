@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard IA · Atendimento Wendell</title>
+<title>Dashboard · Atendimento Wendell</title>
 <style>
   /* Layout: coluna única; faixa "Agora" (tempo real) acima do período; gráficos em grade de 2 colunas que vira 1 no celular */
   :root {
@@ -65,6 +65,25 @@
   .rolagem { overflow-x: auto; }
   .aviso { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .notas { color: var(--muted); font-size: 12px; display: grid; gap: 4px; }
+  .abas { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .abas button { font: inherit; font-size: 14px; font-weight: 600; color: var(--text-2); background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; margin-bottom: -1px; }
+  .abas button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .aba { display: grid; gap: 22px; }
+  .aba[hidden] { display: none; }
+  .tile .rot, .cartao h3 { display: flex; align-items: center; gap: 6px; }
+  .info { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--muted); background: none; color: var(--muted); font: italic 600 10px/14px Georgia, serif; padding: 0; cursor: pointer; text-align: center; }
+  .info:hover, .info[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+  .pop { position: fixed; z-index: 20; max-width: min(360px, calc(100vw - 24px)); background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; box-shadow: 0 8px 28px rgba(0,0,0,.28); display: grid; gap: 6px; }
+  .pop[hidden] { display: none; }
+  .pop b { font-size: 13px; }
+  .pop p { margin: 0; color: var(--text-2); }
+  .pop .conta { background: var(--bg); border-radius: 6px; padding: 6px 8px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .pop .fonte { color: var(--muted); font-size: 11.5px; }
+  .tile.destaque { border-color: var(--accent); grid-column: span 2; }
+  .tile.destaque .val { font-size: 34px; color: var(--accent); }
+  @media (max-width: 420px) { .tile.destaque { grid-column: auto; } }
+  .medidor { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; margin-top: 4px; }
+  .medidor i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
   .carregando { opacity: .55; transition: opacity .2s; }
   @media (prefers-reduced-motion: reduce) { .carregando { transition: none; } }
 </style>
@@ -73,7 +92,7 @@
 <main id="app">
   <header>
     <div>
-      <h1>Dashboard IA</h1>
+      <h1>Dashboard de Atendimento</h1>
       <div class="sub" id="quem">Atendimento WhatsApp 48 9126-5138 · IA da Blip e atendentes</div>
     </div>
     <div class="filtros" role="group" aria-label="Período">
@@ -85,30 +104,52 @@
     </div>
   </header>
 
-  <section aria-labelledby="t-agora">
-    <h2 id="t-agora">Agora <span class="sub" id="agora-hora"></span></h2>
-    <div class="tiles" id="agora"></div>
-  </section>
-
-  <section aria-labelledby="t-periodo">
-    <h2 id="t-periodo">No período <span class="sub" id="periodo-txt"></span></h2>
-    <div class="tiles" id="kpis"></div>
-  </section>
-
-  <div class="grade">
-    <div class="cartao" id="g-volume"></div>
-    <div class="cartao" id="g-finalizados"></div>
-    <div class="cartao" id="g-csat"></div>
-    <div class="cartao" id="g-calor"></div>
+  <div class="abas" role="tablist" aria-label="Visões">
+    <button type="button" role="tab" id="tab-ia" aria-controls="aba-ia" aria-selected="true">IA</button>
+    <button type="button" role="tab" id="tab-humano" aria-controls="aba-humano" aria-selected="false">Humano</button>
   </div>
 
-  <section class="cartao" aria-labelledby="t-atend">
-    <h3 id="t-atend">Por atendente</h3>
-    <div class="rolagem"><table id="atendentes"></table></div>
-  </section>
+  <div class="aba" id="aba-ia" role="tabpanel" aria-labelledby="tab-ia">
+    <section aria-label="Agora (IA)">
+      <h2>Agora <span class="sub agora-hora"></span></h2>
+      <div class="tiles" id="ia-agora"></div>
+    </section>
+    <section aria-label="No período (IA)">
+      <h2>No período <span class="sub periodo-txt"></span></h2>
+      <div class="tiles" id="ia-kpis"></div>
+    </section>
+    <div class="grade">
+      <div class="cartao" id="g-volume"></div>
+      <div class="cartao" id="g-finalizados"></div>
+      <div class="cartao" id="g-csat-ia"></div>
+      <div class="cartao" id="g-calor"></div>
+    </div>
+  </div>
+
+  <div class="aba" id="aba-humano" role="tabpanel" aria-labelledby="tab-humano" hidden>
+    <section aria-label="Agora (humano)">
+      <h2>Agora <span class="sub agora-hora"></span></h2>
+      <div class="tiles" id="hu-agora"></div>
+    </section>
+    <section aria-label="No período (humano)">
+      <h2>No período <span class="sub periodo-txt"></span></h2>
+      <div class="tiles" id="hu-kpis"></div>
+    </section>
+    <div class="grade">
+      <div class="cartao" id="g-resposta-dia"></div>
+      <div class="cartao" id="g-faixas"></div>
+      <div class="cartao" id="g-calor-fila"></div>
+      <div class="cartao" id="g-csat-hu"></div>
+    </div>
+    <section class="cartao" aria-labelledby="t-atend">
+      <h3 id="t-atend">Por atendente <button type="button" class="info" data-info="tabela_atendentes" aria-label="Como é calculado" aria-expanded="false">i</button></h3>
+      <div class="rolagem"><table id="atendentes"></table></div>
+    </section>
+  </div>
 
   <div class="notas" id="notas"></div>
 </main>
+<div class="pop" id="pop" role="dialog" aria-label="Como é calculado" hidden></div>
 <script src="/painel-ia/app.js"></script>
 </body>
 </html>

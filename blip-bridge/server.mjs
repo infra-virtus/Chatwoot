@@ -246,8 +246,10 @@ async function setEstado(conversationId, novo, motivo, extra = {}) {
     attrs.atendimento_desde = agora;
     // Saindo de "Finalizado" começa um novo ciclo: o anterior já está guardado em "ciclos"
     if (atual === ESTADO.FIM) Object.assign(attrs, CICLO_VAZIO);
+    if (atual === ESTADO.FIM || novo === ESTADO.AGUARDANDO) respondida.delete(conversationId);
     if (novo === ESTADO.IA && (atual === ESTADO.FIM || !conv.custom_attributes?.ia_inicio)) attrs.ia_inicio = agora;
-    if (novo === ESTADO.AGUARDANDO) attrs.transferido_em = agora;
+    // Nova transferência: o SLA de 1ª resposta recomeça
+    if (novo === ESTADO.AGUARDANDO) Object.assign(attrs, { transferido_em: agora, primeira_resposta_em: null });
     if (novo === ESTADO.HUMANO) attrs.humano_inicio = agora;
   }
   if (Object.keys(attrs).length) {
@@ -301,8 +303,21 @@ async function aHumano(conversationId, email, motivo) {
 
 // Campos do ciclo atual (IA -> fila -> humano -> fim). Ao finalizar, o ciclo é copiado para "ciclos"
 // (lista, últimos 30) para o painel contar cada atendimento mesmo quando a conversa é reaberta depois.
-const CAMPOS_CICLO = ['ia_inicio', 'transferido_em', 'humano_inicio', 'atendente_blip', 'finalizado_em', 'finalizado_por', 'avaliacao', 'avaliacao_de', 'avaliacao_em'];
+const CAMPOS_CICLO = ['ia_inicio', 'transferido_em', 'humano_inicio', 'primeira_resposta_em', 'atendente_blip', 'finalizado_em', 'finalizado_por', 'avaliacao', 'avaliacao_de', 'avaliacao_em'];
 const CICLO_VAZIO = Object.fromEntries(CAMPOS_CICLO.map((k) => [k, null]));
+
+// 1ª mensagem do atendente no ciclo (base do SLA de resposta). A memória evita consultar a conversa a cada mensagem.
+const respondida = new Set(); // conversationId com primeira_resposta_em já gravada no ciclo atual
+async function registrarPrimeiraResposta(conversationId) {
+  if (respondida.has(conversationId)) return;
+  const conv = await api(`/conversations/${conversationId}`);
+  if (!conv.custom_attributes?.primeira_resposta_em) {
+    await api(`/conversations/${conversationId}/custom_attributes`, {
+      method: 'POST', body: { custom_attributes: { primeira_resposta_em: eventoIso() }, merge: true },
+    });
+  }
+  respondida.add(conversationId);
+}
 
 async function aFinalizado(conversationId, por, motivo) {
   const agora = new Date(eventoEm);
@@ -459,6 +474,7 @@ async function handle(msg) {
   if (human) {
     const ticket = md['#message.ticketId'] ? ' do ticket' : '';
     await transition(conversationId, ESTADO.HUMANO, () => aHumano(conversationId, email, `mensagem do atendente${ticket}`));
+    await registrarPrimeiraResposta(conversationId);
     return;
   }
   const atual = await estadoAtual(conversationId);
@@ -535,28 +551,39 @@ async function conversasDesde(dataIso) {
 }
 
 async function agoraAoVivo() {
+  // Todas as páginas (25 por página): a maior espera e os atendentes ativos precisam da lista completa
   const contar = async (valor) => {
-    const r = await api('/conversations/filter?page=1', {
-      method: 'POST',
-      body: { payload: [
-        { attribute_key: 'atendimento', filter_operator: 'equal_to', values: [valor], query_operator: 'and' },
-        { attribute_key: 'status', filter_operator: 'not_equal_to', values: ['resolved'], query_operator: null },
-      ] },
-    });
-    return { total: r.meta?.all_count ?? 0, amostra: r.payload || [] };
+    const lista = [];
+    for (let page = 1; page <= 10; page++) {
+      const r = await api(`/conversations/filter?page=${page}`, {
+        method: 'POST',
+        body: { payload: [
+          { attribute_key: 'atendimento', filter_operator: 'equal_to', values: [valor], query_operator: 'and' },
+          { attribute_key: 'status', filter_operator: 'not_equal_to', values: ['resolved'], query_operator: null },
+        ] },
+      });
+      lista.push(...(r.payload || []));
+      if ((r.payload || []).length < 25) break;
+    }
+    return { total: lista.length, amostra: lista };
   };
   const [ia, fila, humano] = await Promise.all([contar(ESTADO.IA), contar(ESTADO.AGUARDANDO), contar(ESTADO.HUMANO)]);
   const esperas = fila.amostra.map((c) => (Date.now() - Date.parse(c.custom_attributes?.transferido_em || '')) / 60000).filter(Number.isFinite);
+  const atendentes = new Set(humano.amostra.map((c) => c.meta?.assignee?.id).filter(Boolean));
   return {
     ia: ia.total,
     aguardando: fila.total,
     humano: humano.total,
     maior_espera_min: esperas.length ? Math.max(...esperas) : null,
+    fora_da_meta: esperas.filter((m) => m > SLA_RESPOSTA_MIN).length,
+    meta_min: SLA_RESPOSTA_MIN,
+    atendentes_ativos: atendentes.size,
     atualizado_em: new Date().toISOString(),
   };
 }
 
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SLA_RESPOSTA_MIN = Number(process.env.SLA_RESPOSTA_MIN || 15);
 
 async function kpisDoPeriodo(de, ate) {
   const chave = `${de}|${ate}`;
@@ -565,7 +592,7 @@ async function kpisDoPeriodo(de, ate) {
   // Busca conversas com atividade desde a véspera do início (ciclos que começaram no período)
   const desde = new Date(Date.parse(`${de}T00:00:00-03:00`) - 86400000).toISOString().slice(0, 10);
   const conversas = await conversasDesde(desde);
-  const dados = { ...calcularKpis(conversas, de, ate), conversas_lidas: conversas.length, calculado_em: new Date().toISOString(), dados_desde: '2026-10-30' };
+  const dados = { ...calcularKpis(conversas, de, ate, SLA_RESPOSTA_MIN), conversas_lidas: conversas.length, calculado_em: new Date().toISOString(), dados_desde: '2026-10-30' };
   cacheKpis.set(chave, { dados, expira: Date.now() + 6 * 60 * 1000 });
   if (cacheKpis.size > 50) cacheKpis.delete(cacheKpis.keys().next().value);
   return dados;
