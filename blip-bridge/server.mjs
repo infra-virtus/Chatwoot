@@ -11,6 +11,7 @@
 //     aguardando = aberta sem responsável (aba "Não atribuídas"); humano = aberta atribuída ao atendente.
 // Formato do payload da Blip: ver /home/infra/blipdash/src/normalize/classify.ts.
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 
 const env = (name) => {
   const v = process.env[name];
@@ -26,8 +27,15 @@ const BOT_TOKEN = env('CHATWOOT_BOT_TOKEN'); // mensagens e mudanças de status 
 const BOT_ID = Number(env('CHATWOOT_BOT_ID'));
 const PATH_TOKEN = env('BLIP_WEBHOOK_PATH_TOKEN');
 const PORT = Number(process.env.PORT || 8080);
+// Atendentes só são criados automaticamente para e-mails destes domínios (webhook forjado não cria usuário)
+const ALLOWED_AGENT_DOMAINS = env('ALLOWED_AGENT_DOMAINS').toLowerCase().split(',').map((d) => d.trim()).filter(Boolean);
+const MAX_BODY_BYTES = 1024 * 1024; // itens do webhook da Blip têm poucos KB
 
-const WEBHOOK_PATH = `/blip-webhook/${PATH_TOKEN}`;
+const WEBHOOK_PATH = Buffer.from(`/blip-webhook/${PATH_TOKEN}`);
+const isWebhookPath = (url) => {
+  const got = Buffer.from(String(url));
+  return got.length === WEBHOOK_PATH.length && timingSafeEqual(got, WEBHOOK_PATH);
+};
 const SKIP_TYPES = new Set(['application/vnd.lime.chatstate+json', 'application/vnd.lime.notification+json']);
 const TICKET_TYPE = 'application/vnd.iris.ticket+json';
 const CLOSED_TICKET = /^Closed/; // ClosedAttendant, ClosedClient, ClosedClientInactivity
@@ -82,7 +90,21 @@ async function api(path, { method = 'GET', token = USER_TOKEN, body } = {}) {
   }
 }
 
+// A Blip formata com HTML (<b>, <i>, <br>): vira markdown simples e o resto das tags é removido,
+// para nenhum HTML de terceiros chegar ao painel.
+function sanitize(text) {
+  return String(text ?? '')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\s*(b|strong)\s*>(.*?)<\s*\/\s*\1\s*>/gis, '**$2**')
+    .replace(/<\s*(i|em)\s*>(.*?)<\s*\/\s*\1\s*>/gis, '_$2_')
+    .replace(/<[^>]*>/g, '');
+}
+
 function render(type, content) {
+  return sanitize(renderRaw(type, content));
+}
+
+function renderRaw(type, content) {
   if (type === 'text/plain') return String(content ?? '');
   if (content && typeof content === 'object') {
     if (type === 'application/vnd.lime.media-link+json') {
@@ -93,7 +115,7 @@ function render(type, content) {
       return [content.text, ...opts].filter(Boolean).join('\n');
     }
     if (type === 'application/vnd.lime.collection+json') {
-      return (content.items || []).map((it) => render(content.itemType, it)).filter(Boolean).join('\n\n');
+      return (content.items || []).map((it) => renderRaw(content.itemType, it)).filter(Boolean).join('\n\n');
     }
     // Interativos/templates do WhatsApp chegam como application/json
     const text = content.text ?? content.interactive?.body?.text ?? content.template?.name;
@@ -159,8 +181,18 @@ async function conversationFor(digits) {
 function agentEmail(identity) {
   if (!identity) return null;
   const local = bare(identity).replace(/@blip\.ai$/, '');
-  const email = decodeURIComponent(local);
-  return email.includes('@') ? email : null;
+  let email;
+  try {
+    email = decodeURIComponent(local).toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) return null;
+  if (!ALLOWED_AGENT_DOMAINS.includes(email.split('@')[1])) {
+    log(`atendente ignorado: domínio fora da lista permitida (${email.split('@')[1]})`);
+    return null;
+  }
+  return email;
 }
 
 const agentCache = new Map(); // e-mail -> id do usuário no Chatwoot
@@ -382,20 +414,43 @@ async function handle(msg) {
 
 // Fila serial: evita criar a mesma conversa duas vezes e aplica as transições na ordem de chegada.
 let queue = Promise.resolve();
+const stats = { requisicoes: 0, itens: 0, erros: 0 };
 const enqueue = (item) => {
-  queue = queue.then(() => handle(item)).catch((e) => log('ERRO', e.message));
+  stats.itens++;
+  queue = queue.then(() => handle(item)).catch((e) => {
+    stats.erros++;
+    log('ERRO', e.message);
+  });
 };
+
+// Resumo periódico (só contagens) para monitorar se a Blip continua enviando
+setInterval(() => {
+  log(`resumo 5min: requisições=${stats.requisicoes} itens=${stats.itens} erros=${stats.erros}`);
+  stats.requisicoes = stats.itens = stats.erros = 0;
+}, 5 * 60 * 1000).unref();
 
 http
   .createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') return res.end('ok');
-    if (req.method !== 'POST' || req.url !== WEBHOOK_PATH) {
+    if (req.method !== 'POST' || !isWebhookPath(req.url)) {
       res.statusCode = 404;
       return res.end();
     }
+    stats.requisicoes++;
     let raw = '';
-    req.on('data', (c) => (raw += c));
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        res.statusCode = 413;
+        res.end();
+        req.destroy();
+        return;
+      }
+      raw += c;
+    });
     req.on('end', () => {
+      if (res.writableEnded) return;
       res.end('ok'); // responde já; processa em seguida
       try {
         const body = JSON.parse(raw);
