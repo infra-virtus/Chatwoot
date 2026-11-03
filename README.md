@@ -82,6 +82,16 @@ O atendimento ao cliente é feito na Blip; o Chatwoot só acompanha.
 - **Tela:** `branding/dashboard-scripts.html` deixa a caixa de resposta sempre em "Mensagem Privada" e esconde "Responder".
 - A ponte refaz chamadas ao Chatwoot por até ~3 min quando ele está reiniciando (não perde mensagens da Blip).
 
+## Dashboard IA (/painel-ia)
+
+- Servido pela ponte (`blip-bridge/painel/`: `index.html`, `app.js`, `kpis.mjs` + `kpis.test.mjs`), no mesmo endereço do
+  Chatwoot (Traefik envia `/painel-ia` para a ponte). Abre pelo ícone de gráfico ao lado do nome da conta.
+- Acesso pelo login do Chatwoot: a ponte valida o cookie de sessão em `/api/v1/profile` e libera só os e-mails de
+  `DASHBOARD_ALLOWED_EMAILS` (docker-compose.yml). API só leitura, `Cache-Control: no-store`, CSP restrita.
+- KPIs por ciclo de atendimento (campo `ciclos` + ciclo atual), definições em `docs/kpis.md`. Períodos Hoje/7/30 dias
+  pré-calculados a cada 5 min; outros períodos calculados na hora (até 92 dias).
+- Testes do cálculo: `cd blip-bridge/painel && node kpis.test.mjs`.
+
 ## Operação
 
 - **Atualizar versão:** no Portainer → Stacks → chatwoot → Editor, trocar `CHATWOOT_IMAGE` nas variáveis

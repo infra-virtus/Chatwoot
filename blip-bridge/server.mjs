@@ -11,8 +11,9 @@
 //     aguardando = aberta sem responsável (aba "Não atribuídas"); humano = aberta atribuída ao atendente.
 // Formato do payload da Blip: ver /home/infra/blipdash/src/normalize/classify.ts.
 import http from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { calcularKpis } from './painel/kpis.mjs';
 
 const env = (name) => {
   const v = process.env[name];
@@ -243,7 +244,9 @@ async function setEstado(conversationId, novo, motivo, extra = {}) {
   if (atual !== novo) {
     attrs.atendimento = novo;
     attrs.atendimento_desde = agora;
-    if (novo === ESTADO.IA && !conv.custom_attributes?.ia_inicio) attrs.ia_inicio = agora;
+    // Saindo de "Finalizado" começa um novo ciclo: o anterior já está guardado em "ciclos"
+    if (atual === ESTADO.FIM) Object.assign(attrs, CICLO_VAZIO);
+    if (novo === ESTADO.IA && (atual === ESTADO.FIM || !conv.custom_attributes?.ia_inicio)) attrs.ia_inicio = agora;
     if (novo === ESTADO.AGUARDANDO) attrs.transferido_em = agora;
     if (novo === ESTADO.HUMANO) attrs.humano_inicio = agora;
   }
@@ -296,9 +299,24 @@ async function aHumano(conversationId, email, motivo) {
   }
 }
 
+// Campos do ciclo atual (IA -> fila -> humano -> fim). Ao finalizar, o ciclo é copiado para "ciclos"
+// (lista, últimos 30) para o painel contar cada atendimento mesmo quando a conversa é reaberta depois.
+const CAMPOS_CICLO = ['ia_inicio', 'transferido_em', 'humano_inicio', 'atendente_blip', 'finalizado_em', 'finalizado_por', 'avaliacao', 'avaliacao_de', 'avaliacao_em'];
+const CICLO_VAZIO = Object.fromEntries(CAMPOS_CICLO.map((k) => [k, null]));
+
 async function aFinalizado(conversationId, por, motivo) {
   const agora = new Date(eventoEm);
-  const conv = await setEstado(conversationId, ESTADO.FIM, motivo, { finalizado_por: por, finalizado_em: agora.toISOString() });
+  const antes = await api(`/conversations/${conversationId}`);
+  if (antes.custom_attributes?.atendimento === ESTADO.FIM) {
+    const conv = await setEstado(conversationId, ESTADO.FIM, motivo);
+    await setStatus(conv, 'resolved');
+    return;
+  }
+  const ca = antes.custom_attributes || {};
+  const ciclo = Object.fromEntries(CAMPOS_CICLO.map((k) => [k, ca[k] ?? null]));
+  Object.assign(ciclo, { finalizado_por: por, finalizado_em: agora.toISOString() });
+  const ciclos = [...(Array.isArray(ca.ciclos) ? ca.ciclos : []), ciclo].slice(-30);
+  const conv = await setEstado(conversationId, ESTADO.FIM, motivo, { finalizado_por: por, finalizado_em: agora.toISOString(), ciclos });
   finalizadoEm.set(conversationId, Date.now()); // janela da pesquisa conta da chegada
   await setStatus(conv, 'resolved');
 }
@@ -332,6 +350,12 @@ async function transition(conversationId, novo, fn) {
   if ((await estadoAtual(conversationId)) === novo && novo !== ESTADO.HUMANO) return;
   await fn();
   estadoCache.set(conversationId, novo);
+}
+
+function comNotaNoUltimoCiclo(ca, nota, de) {
+  const ciclos = Array.isArray(ca?.ciclos) ? ca.ciclos.map((c) => ({ ...c })) : [];
+  if (ciclos.length) Object.assign(ciclos[ciclos.length - 1], { avaliacao: nota, avaliacao_de: de, avaliacao_em: new Date().toISOString() });
+  return ciclos;
 }
 
 // CSAT nativo do Chatwoot: a nota da pesquisa da Blip vira uma resposta de satisfação (relatório de CSAT,
@@ -400,7 +424,7 @@ async function handle(msg) {
     const de = conv.custom_attributes?.finalizado_por === 'IA' ? 'IA' : 'Atendente';
     await api(`/conversations/${conversationId}/custom_attributes`, {
       method: 'POST',
-      body: { custom_attributes: { avaliacao: Number(nota[1]), avaliacao_de: de, avaliacao_em: new Date().toISOString() }, merge: true },
+      body: { custom_attributes: { avaliacao: Number(nota[1]), avaliacao_de: de, avaliacao_em: new Date().toISOString(), ciclos: comNotaNoUltimoCiclo(conv.custom_attributes, Number(nota[1]), de) }, merge: true },
     });
     await api(`/conversations/${conversationId}/messages`, {
       method: 'POST', token: BOT_TOKEN, body: { content: `⭐ Avaliação do cliente: ${nota[1]}/5 (${de})`, private: true },
@@ -457,6 +481,144 @@ async function handle(msg) {
   if (atual === ESTADO.AGUARDANDO) return;
   await transition(conversationId, ESTADO.IA, () =>
     aIA(conversationId, atual === ESTADO.HUMANO ? 'bot voltou a responder após o atendente' : 'mensagem do bot'));
+}
+
+// ---------- Dashboard IA (/painel-ia) ----------
+// Página aberta de dentro do Chatwoot (mesmo endereço). Acesso pelo login do próprio Chatwoot: o navegador envia o
+// cookie de sessão "cw_d_session_info"; a ponte confere a sessão em /api/v1/profile e libera só os e-mails da lista.
+const PAINEL_EMAILS = (process.env.DASHBOARD_ALLOWED_EMAILS || '').toLowerCase().split(',').map((e) => e.trim()).filter(Boolean);
+const PAINEL_DIR = new URL('./painel/', import.meta.url);
+const sessoes = new Map(); // hash da sessão -> { usuario, expira }
+
+function cookie(req, nome) {
+  for (const parte of String(req.headers.cookie || '').split(';')) {
+    const i = parte.indexOf('=');
+    if (i > 0 && parte.slice(0, i).trim() === nome) return decodeURIComponent(parte.slice(i + 1).trim());
+  }
+  return null;
+}
+
+async function usuarioDaSessao(req) {
+  let s;
+  try {
+    s = JSON.parse(cookie(req, 'cw_d_session_info') || 'null');
+  } catch {
+    return null;
+  }
+  if (!s?.['access-token'] || !s.client || !s.uid) return null;
+  const chave = createHash('sha256').update(`${s['access-token']}|${s.client}|${s.uid}`).digest('hex');
+  const cache = sessoes.get(chave);
+  if (cache && cache.expira > Date.now()) return cache.usuario;
+  const res = await fetch(`${CHATWOOT_URL}/api/v1/profile`, {
+    headers: { 'access-token': s['access-token'], client: s.client, uid: s.uid, 'token-type': 'Bearer' },
+  });
+  const usuario = res.ok ? await res.json() : null;
+  sessoes.set(chave, { usuario, expira: Date.now() + 5 * 60 * 1000 });
+  if (sessoes.size > 500) sessoes.delete(sessoes.keys().next().value);
+  return usuario;
+}
+
+const cacheKpis = new Map(); // "de|ate" -> { dados, expira }
+
+async function conversasDesde(dataIso) {
+  const lista = [];
+  for (let page = 1; page <= 400; page++) {
+    const r = await api(`/conversations/filter?page=${page}`, {
+      method: 'POST',
+      body: { payload: [{ attribute_key: 'last_activity_at', filter_operator: 'is_greater_than', values: [dataIso], query_operator: null }] },
+    });
+    const b = r.payload || [];
+    if (!b.length) break;
+    for (const c of b) lista.push({ id: c.id, status: c.status, custom_attributes: c.custom_attributes || {} });
+  }
+  return lista;
+}
+
+async function agoraAoVivo() {
+  const contar = async (valor) => {
+    const r = await api('/conversations/filter?page=1', {
+      method: 'POST',
+      body: { payload: [
+        { attribute_key: 'atendimento', filter_operator: 'equal_to', values: [valor], query_operator: 'and' },
+        { attribute_key: 'status', filter_operator: 'not_equal_to', values: ['resolved'], query_operator: null },
+      ] },
+    });
+    return { total: r.meta?.all_count ?? 0, amostra: r.payload || [] };
+  };
+  const [ia, fila, humano] = await Promise.all([contar(ESTADO.IA), contar(ESTADO.AGUARDANDO), contar(ESTADO.HUMANO)]);
+  const esperas = fila.amostra.map((c) => (Date.now() - Date.parse(c.custom_attributes?.transferido_em || '')) / 60000).filter(Number.isFinite);
+  return {
+    ia: ia.total,
+    aguardando: fila.total,
+    humano: humano.total,
+    maior_espera_min: esperas.length ? Math.max(...esperas) : null,
+    atualizado_em: new Date().toISOString(),
+  };
+}
+
+const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function kpisDoPeriodo(de, ate) {
+  const chave = `${de}|${ate}`;
+  const cache = cacheKpis.get(chave);
+  if (cache && cache.expira > Date.now()) return cache.dados;
+  // Busca conversas com atividade desde a véspera do início (ciclos que começaram no período)
+  const desde = new Date(Date.parse(`${de}T00:00:00-03:00`) - 86400000).toISOString().slice(0, 10);
+  const conversas = await conversasDesde(desde);
+  const dados = { ...calcularKpis(conversas, de, ate), conversas_lidas: conversas.length, calculado_em: new Date().toISOString(), dados_desde: '2026-10-30' };
+  cacheKpis.set(chave, { dados, expira: Date.now() + 6 * 60 * 1000 });
+  if (cacheKpis.size > 50) cacheKpis.delete(cacheKpis.keys().next().value);
+  return dados;
+}
+
+// Pré-cálculo dos períodos dos botões (Hoje, 7 e 30 dias) a cada 5 min: a tela abre sem esperar a leitura
+const hojeSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+const diasAtras = (n) => new Date(Date.parse(`${hojeSP()}T12:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
+async function aquecerPainel() {
+  if (!PAINEL_EMAILS.length) return;
+  for (const n of [6, 0, 29]) {
+    cacheKpis.delete(`${diasAtras(n)}|${hojeSP()}`);
+    await kpisDoPeriodo(diasAtras(n), hojeSP());
+  }
+}
+setTimeout(() => aquecerPainel().catch((e) => log('ERRO painel (pré-cálculo)', e.message)), 20000).unref();
+setInterval(() => aquecerPainel().catch((e) => log('ERRO painel (pré-cálculo)', e.message)), 5 * 60 * 1000).unref();
+
+async function rotaPainel(req, res) {
+  const url = new URL(req.url, 'http://local');
+  const enviar = (status, corpo, tipo = 'application/json; charset=utf-8') => {
+    res.writeHead(status, {
+      'Content-Type': tipo,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+    });
+    res.end(typeof corpo === 'string' || Buffer.isBuffer(corpo) ? corpo : JSON.stringify(corpo));
+  };
+  if (req.method !== 'GET') return enviar(405, { erro: 'método não permitido' });
+
+  if (url.pathname === '/painel-ia' || url.pathname === '/painel-ia/') return enviar(200, readFileSync(new URL('index.html', PAINEL_DIR)), 'text/html; charset=utf-8');
+  if (url.pathname === '/painel-ia/app.js') return enviar(200, readFileSync(new URL('app.js', PAINEL_DIR)), 'text/javascript; charset=utf-8');
+
+  const usuario = await usuarioDaSessao(req);
+  if (!usuario) return enviar(401, { erro: 'Entre no Chatwoot para ver o painel.' });
+  const email = String(usuario.email || '').toLowerCase();
+  if (!PAINEL_EMAILS.includes(email)) {
+    log(`painel: acesso negado (${email.replace(/^(.).*@/, '$1***@')})`);
+    return enviar(403, { erro: 'Seu usuário ainda não tem acesso ao Dashboard IA.' });
+  }
+
+  if (url.pathname === '/painel-ia/api/me') return enviar(200, { nome: usuario.name, email });
+  if (url.pathname === '/painel-ia/api/agora') return enviar(200, await agoraAoVivo());
+  if (url.pathname === '/painel-ia/api/kpis') {
+    const de = url.searchParams.get('de');
+    const ate = url.searchParams.get('ate');
+    if (!DATA_RE.test(de || '') || !DATA_RE.test(ate || '') || de > ate) return enviar(422, { erro: 'Período inválido (use AAAA-MM-DD).' });
+    if ((Date.parse(ate) - Date.parse(de)) / 86400000 > 92) return enviar(422, { erro: 'Período máximo: 92 dias.' });
+    return enviar(200, await kpisDoPeriodo(de, ate));
+  }
+  return enviar(404, { erro: 'não encontrado' });
 }
 
 // Fila serial: evita criar a mesma conversa duas vezes e aplica as transições na ordem de chegada.
@@ -519,6 +681,14 @@ setInterval(() => {
 http
   .createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') return res.end('ok');
+    if (req.url.startsWith('/painel-ia')) {
+      rotaPainel(req, res).catch((e) => {
+        log('ERRO painel', e.message);
+        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ erro: 'Falha ao calcular o painel. Tente de novo em instantes.' }));
+      });
+      return;
+    }
     if (req.method !== 'POST' || !isWebhookPath(req.url)) {
       res.statusCode = 404;
       return res.end();

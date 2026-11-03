@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard IA · Atendimento Wendell</title>
+<style>
+  /* Layout: coluna única; faixa "Agora" (tempo real) acima do período; gráficos em grade de 2 colunas que vira 1 no celular */
+  :root {
+    --bg: #f6f7f7; --surface: #ffffff; --line: #e3e6e6; --grid: #eef0f0;
+    --text: #141a1b; --text-2: #4d5a5c; --muted: #7b8789;
+    --series-1: #2a78d6; --series-2: #eb6834;
+    --seq-0: #eef4fc; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5; --seq-5: #256abf; --seq-6: #184f95;
+    --accent: #1f6f8b; --focus: #1f6f8b;
+    color-scheme: light;
+  }
+  :root[data-tema="dark"] {
+    --bg: #111315; --surface: #1a1c1f; --line: #2b2f33; --grid: #23272b;
+    --text: #eef0f1; --text-2: #b9c0c4; --muted: #8a9398;
+    --series-1: #3987e5; --series-2: #d95926;
+    --seq-0: #1c2430; --seq-1: #13304f; --seq-2: #184f95; --seq-3: #1c5cab; --seq-4: #2a78d6; --seq-5: #5598e7; --seq-6: #9ec5f4;
+    --accent: #6da7ec; --focus: #9ec5f4;
+    color-scheme: dark;
+  }
+  :root[data-tema="virtus"] {
+    --bg: #1B3033; --surface: #223b3f; --line: #34565a; --grid: #2b4649;
+    --text: #ffffff; --text-2: #d3dedd; --muted: #9fb3b2;
+    --series-1: #3987e5; --series-2: #d95926;
+    --seq-0: #233d41; --seq-1: #13304f; --seq-2: #184f95; --seq-3: #1c5cab; --seq-4: #2a78d6; --seq-5: #5598e7; --seq-6: #9ec5f4;
+    --accent: #D6A45E; --focus: #D6A45E;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-left)) 40px; display: grid; gap: 22px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .07em; color: var(--text-2); font-weight: 600; }
+  h3 { font-size: 14px; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .filtros { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .filtros button, .filtros input { font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .filtros button { cursor: pointer; }
+  .filtros button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  section { display: grid; gap: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+  .tile .rot { color: var(--text-2); font-size: 12px; }
+  .tile .val { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .tile .det { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 860px) { .grade { grid-template-columns: 1fr; } }
+  .cartao { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; display: grid; gap: 8px; position: relative; }
+  .legenda { display: flex; gap: 14px; font-size: 12px; color: var(--text-2); }
+  .legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tip { position: absolute; pointer-events: none; background: var(--text); color: var(--bg); font-size: 12px; padding: 6px 8px; border-radius: 6px; white-space: nowrap; z-index: 5; display: none; }
+  details { font-size: 12px; color: var(--text-2); }
+  details summary { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+  td.n, th.n { text-align: right; }
+  .rolagem { overflow-x: auto; }
+  .aviso { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .notas { color: var(--muted); font-size: 12px; display: grid; gap: 4px; }
+  .carregando { opacity: .55; transition: opacity .2s; }
+  @media (prefers-reduced-motion: reduce) { .carregando { transition: none; } }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <div>
+      <h1>Dashboard IA</h1>
+      <div class="sub" id="quem">Atendimento WhatsApp 48 9126-5138 · IA da Blip e atendentes</div>
+    </div>
+    <div class="filtros" role="group" aria-label="Período">
+      <button type="button" data-dias="0">Hoje</button>
+      <button type="button" data-dias="6" aria-pressed="true">7 dias</button>
+      <button type="button" data-dias="29">30 dias</button>
+      <input type="date" id="de" aria-label="De">
+      <input type="date" id="ate" aria-label="Até">
+    </div>
+  </header>
+
+  <section aria-labelledby="t-agora">
+    <h2 id="t-agora">Agora <span class="sub" id="agora-hora"></span></h2>
+    <div class="tiles" id="agora"></div>
+  </section>
+
+  <section aria-labelledby="t-periodo">
+    <h2 id="t-periodo">No período <span class="sub" id="periodo-txt"></span></h2>
+    <div class="tiles" id="kpis"></div>
+  </section>
+
+  <div class="grade">
+    <div class="cartao" id="g-volume"></div>
+    <div class="cartao" id="g-finalizados"></div>
+    <div class="cartao" id="g-csat"></div>
+    <div class="cartao" id="g-calor"></div>
+  </div>
+
+  <section class="cartao" aria-labelledby="t-atend">
+    <h3 id="t-atend">Por atendente</h3>
+    <div class="rolagem"><table id="atendentes"></table></div>
+  </section>
+
+  <div class="notas" id="notas"></div>
+</main>
+<script src="/painel-ia/app.js"></script>
+</body>
+</html>

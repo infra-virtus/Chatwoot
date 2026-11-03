@@ -162,3 +162,94 @@
   lock();
 })();
 </script>
+
+<!-- Dashboard IA: ícone ao lado do nome da conta (só para quem tem acesso) que abre /painel-ia em tela cheia -->
+<style id="virtus-painel-style">
+  #virtus-painel-btn {
+    display: inline-grid; place-content: center; flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
+    cursor: pointer; color: rgb(var(--slate-10)); transition: color .15s, background-color .15s;
+  }
+  #virtus-painel-btn { margin-left: auto; }
+  #virtus-painel-btn + #virtus-theme-toggle { margin-left: 2px; }
+  #virtus-painel-btn:hover { color: #D6A45E; background-color: rgba(214, 164, 94, .12); }
+  #virtus-painel-btn:focus-visible { outline: 2px solid #D6A45E; outline-offset: 1px; }
+  #virtus-painel-btn svg { width: 15px; height: 15px; }
+  #virtus-painel-overlay { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .45); display: none; }
+  #virtus-painel-overlay.aberto { display: block; }
+  #virtus-painel-overlay iframe { position: absolute; inset: 12px; width: calc(100% - 24px); height: calc(100% - 24px); border: 0; border-radius: 12px; background: #111315; }
+  #virtus-painel-fechar {
+    position: absolute; top: 20px; right: 28px; z-index: 1; border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer;
+    font: 600 12px system-ui, -apple-system, "Segoe UI", sans-serif; background: rgba(255, 255, 255, .12); color: #fff;
+  }
+</style>
+<script id="virtus-painel-script">
+(function () {
+  var ICONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>';
+  var btn = document.createElement('span');
+  btn.id = 'virtus-painel-btn';
+  btn.setAttribute('role', 'button');
+  btn.tabIndex = 0;
+  btn.title = 'Dashboard IA';
+  btn.setAttribute('aria-label', 'Abrir Dashboard IA');
+  btn.innerHTML = ICONE;
+
+  var overlay = document.createElement('div');
+  overlay.id = 'virtus-painel-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-label', 'Dashboard IA');
+  var fechar = document.createElement('button');
+  fechar.id = 'virtus-painel-fechar';
+  fechar.type = 'button';
+  fechar.textContent = 'Fechar (Esc)';
+  overlay.appendChild(fechar);
+  document.body.appendChild(overlay);
+
+  function tema() {
+    var b = document.body.classList;
+    return b.contains('virtus') ? 'virtus' : b.contains('dark') ? 'dark' : 'light';
+  }
+  function abrir(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    var antigo = overlay.querySelector('iframe');
+    if (antigo) antigo.remove();
+    var frame = document.createElement('iframe');
+    frame.title = 'Dashboard IA';
+    frame.src = '/painel-ia/?tema=' + tema();
+    overlay.appendChild(frame);
+    overlay.classList.add('aberto');
+    fechar.focus();
+  }
+  function fecharPainel() {
+    overlay.classList.remove('aberto');
+    var f = overlay.querySelector('iframe');
+    if (f) f.remove();
+    btn.focus();
+  }
+  btn.addEventListener('click', abrir);
+  btn.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') abrir(e); });
+  fechar.addEventListener('click', fecharPainel);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && overlay.classList.contains('aberto')) fecharPainel(); });
+
+  // Só mostra o ícone para quem tem acesso (a própria API confere o login)
+  var liberado = false;
+  fetch('/painel-ia/api/me', { credentials: 'same-origin', cache: 'no-store' })
+    .then(function (r) { liberado = r.ok; colocar(); })
+    .catch(function () {});
+
+  var marcado = false;
+  function colocar() {
+    marcado = false;
+    if (!liberado) return;
+    var host = document.getElementById('sidebar-account-switcher');
+    if (host && btn.parentNode !== host) {
+      var tema = document.getElementById('virtus-theme-toggle');
+      if (tema && tema.parentNode === host) host.insertBefore(btn, tema); else host.appendChild(btn);
+    }
+  }
+  new MutationObserver(function () {
+    if (!marcado) { marcado = true; requestAnimationFrame(colocar); }
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
