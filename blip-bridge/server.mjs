@@ -47,6 +47,8 @@ const SURVEY = /avalia(r|ção|cao)|nota de [01] a (5|10)|de 1 a 5|satisfa(ção
 // Fluxo da Blip: saudação inicia um atendimento; despedida fecha a pesquisa de satisfação
 const SAUDACAO = /seja muito bem-vind|como posso te ajudar hoje/i;
 const DESPEDIDA = /agradecemos o seu contato/i;
+// A Blip repete o pedido de avaliação quando o cliente demora ("Vamos tentar novamente..."): continua o atendimento finalizado
+const REPESQUISA = /vamos tentar novamente/i;
 
 const ESTADO = {
   IA: 'IA',
@@ -482,6 +484,12 @@ async function handle(msg) {
   // nesse intervalo a conversa segue finalizada e, se a resposta do cliente a reabriu, é encerrada de novo.
   // Uma saudação do bot é o começo de um novo atendimento e encerra a janela; a mensagem de despedida
   // da pesquisa encerra a janela depois de manter a conversa finalizada.
+  // Pedido de avaliação repetido depois da janela: não abre um atendimento novo, reabre a janela para receber a nota
+  if (atual === ESTADO.FIM && (SURVEY.test(text) || REPESQUISA.test(text)) && !SAUDACAO.test(text)) {
+    finalizadoEm.set(conversationId, Date.now());
+    await setStatus(await api(`/conversations/${conversationId}`), 'resolved');
+    return;
+  }
   if (atual === ESTADO.FIM && !SAUDACAO.test(text) && (await dentroDoFechamento(conversationId))) {
     const conv = await api(`/conversations/${conversationId}`);
     await setStatus(conv, 'resolved');

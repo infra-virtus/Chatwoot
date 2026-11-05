@@ -34,4 +34,18 @@ assert.equal(k.sla.faixas.find((f) => f.rotulo === '5–15 min').n, 1);
 assert.equal(k.atendentes[0].resposta_mediana, 12);
 assert.equal(calcularKpis(convs, '2026-11-02', '2026-11-03', 10).sla.na_meta.num, 0); // meta de 10 min
 assert.equal(k.calor_fila.flat().reduce((s, v) => s + v, 0), 2);
+// Geral: 5 ciclos em 5 conversas; só IA = 1,4,5; com humano = 2,3; finalizados 1 (IA), 2 (Atendente), 3 (Inatividade)
+const g = k.geral;
+assert.deepEqual([g.clientes, g.clientes_que_voltaram, g.so_ia, g.com_humano, g.em_andamento], [5, 0, 3, 2, 2]);
+assert.deepEqual(g.finalizados_por, { IA: 1, Atendente: 1, Inatividade: 1 });
+assert.equal(g.duracao_ia_min.mediana, 10); assert.equal(g.duracao_humano_min.mediana, 45);
+assert.deepEqual([g.cobertura.pesquisa_respondida.num, g.cobertura.pesquisa_respondida.den], [2, 2]);
+assert.deepEqual([g.cobertura.encerramento_registrado.num, g.cobertura.encerramento_registrado.den], [2, 3]);
+assert.deepEqual([g.cobertura.atendente_identificado.num, g.cobertura.primeira_resposta.num], [1, 1]);
+assert.deepEqual([g.ia_inatividade.num, g.ia_inatividade.den], [0, 1]);
+assert.deepEqual([g.finalizados_so_ia, g.finalizados_com_humano, g.ia_concluidos], [1, 2, 1]);
+assert.deepEqual(k.serie.map((d) => [d.so_ia, d.com_humano]), [[2, 1], [1, 1]]);
+// nota em ciclo sem início: entra no CSAT (data do encerramento), não no volume
+const comSemInicio = calcularKpis([...convs, c(9, { finalizado_em: '2026-11-03T14:00:00Z', finalizado_por: 'IA', avaliacao: 3, avaliacao_de: 'IA' })], '2026-11-02', '2026-11-03');
+assert.equal(comSemInicio.recebidos, 5); assert.equal(comSemInicio.csat.geral.n, 3); assert.equal(comSemInicio.csat.ia.n, 2);
 console.log('KPIs: todos os testes passaram');

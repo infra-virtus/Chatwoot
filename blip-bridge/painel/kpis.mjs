@@ -46,6 +46,16 @@ export function ciclosDaConversa(conv) {
 // Faixas do tempo de 1ª resposta (minutos) para o histograma do SLA
 const FAIXAS = [[0, 5, 'até 5 min'], [5, 15, '5–15 min'], [15, 30, '15–30 min'], [30, 60, '30–60 min'], [60, 120, '1–2 h'], [120, Infinity, 'mais de 2 h']];
 
+// Ciclos finalizados sem início registrado (a pesquisa chegou numa conversa sem estado): não entram no volume,
+// mas a nota do cliente entra na satisfação, pela data do encerramento.
+export function avaliadosSemInicio(conv) {
+  const ca = conv.custom_attributes || {};
+  return [...(Array.isArray(ca.ciclos) ? ca.ciclos : []), ca]
+    .filter((c) => c.finalizado_em && c.avaliacao != null && !c.ia_inicio && !c.transferido_em && !c.humano_inicio)
+    .filter((c, i, l) => l.findIndex((x) => x.finalizado_em === c.finalizado_em) === i)
+    .map((c) => ({ avaliacao: c.avaliacao, avaliacao_de: c.avaliacao_de, inicio: t(c.finalizado_em), conversa: conv.id }));
+}
+
 // de / ate: 'AAAA-MM-DD' (inclusive), no fuso de São Paulo. metaMin: meta do SLA de 1ª resposta.
 export function calcularKpis(conversas, de, ate, metaMin = 15) {
   const dentro = (ms) => Number.isFinite(ms) && dataLocal(ms) >= de && dataLocal(ms) <= ate;
@@ -71,7 +81,7 @@ export function calcularKpis(conversas, de, ate, metaMin = 15) {
   const slaMeta = taxa(primeiraResposta.filter((m) => m <= metaMin).length, respondidos.length + semResposta.length);
   const naMeta = (lista) => taxa(lista.filter((c) => tResp(c) <= metaMin).length, lista.length);
 
-  const avaliados = ciclos.filter((c) => c.avaliacao != null);
+  const avaliados = [...ciclos.filter((c) => c.avaliacao != null), ...conversas.flatMap(avaliadosSemInicio).filter((c) => dentro(c.inicio))];
   const csat = (lista) => ({
     n: lista.length,
     media: lista.length ? lista.reduce((s, c) => s + Number(c.avaliacao), 0) / lista.length : null,
@@ -91,6 +101,8 @@ export function calcularKpis(conversas, de, ate, metaMin = 15) {
       transferidos: doDia.filter((c) => c.transferido_em).length,
       finalizados_ia: fin.filter((c) => c.ia_inicio && !c.transferido_em).length,
       finalizados_humano: fin.filter((c) => c.humano_inicio).length,
+      so_ia: doDia.filter((c) => c.ia_inicio && !c.transferido_em).length,
+      com_humano: doDia.filter((c) => c.transferido_em || c.humano_inicio).length,
       resposta_mediana: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.5),
       resposta_p90: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.9),
     };
@@ -134,8 +146,40 @@ export function calcularKpis(conversas, de, ate, metaMin = 15) {
     }))
     .sort((x, y) => y.atendimentos - x.atendimentos);
 
+  // Visão geral: IA x humano, desfecho e cobertura dos dados coletados
+  const soIa = ciclos.filter((c) => c.ia_inicio && !c.transferido_em);
+  const comHumano = ciclos.filter((c) => c.transferido_em || c.humano_inicio);
+  const por = (q) => finalizados.filter((c) => c.finalizado_por === q);
+  const duracao = (lista) => resumoTempo(lista.filter((c) => t(c.finalizado_em) >= c.inicio).map((c) => (t(c.finalizado_em) - c.inicio) / 60000));
+  const porConversa = new Map();
+  for (const c of ciclos) porConversa.set(c.conversa, (porConversa.get(c.conversa) || 0) + 1);
+  const comAtendente = ciclos.filter((c) => c.humano_inicio);
+  const geral = {
+    clientes: porConversa.size,
+    clientes_que_voltaram: [...porConversa.values()].filter((n) => n > 1).length,
+    em_andamento: ciclos.length - finalizados.length,
+    finalizados: finalizados.length,
+    finalizados_por: { IA: por('IA').length, Atendente: por('Atendente').length, Inatividade: por('Inatividade').length },
+    so_ia: soIa.length,
+    com_humano: comHumano.length,
+    finalizados_so_ia: finalizados.filter((c) => !c.transferido_em && !c.humano_inicio).length,
+    finalizados_com_humano: finalizados.filter((c) => c.transferido_em || c.humano_inicio).length,
+    ia_concluidos: por('IA').filter((c) => !c.transferido_em && !c.humano_inicio).length,
+    participacao_ia: taxa(soIa.length, ciclos.length),
+    duracao_ia_min: duracao(por('IA').filter((c) => !c.transferido_em)),
+    duracao_humano_min: duracao(por('Atendente').filter((c) => c.transferido_em || c.humano_inicio)),
+    ia_inatividade: taxa(por('Inatividade').filter((c) => !c.transferido_em).length, finalizados.filter((c) => !c.transferido_em).length),
+    cobertura: {
+      pesquisa_respondida: taxa(finalizados.filter((c) => c.avaliacao != null && c.finalizado_por !== 'Inatividade').length, finalizados.filter((c) => c.finalizado_por !== 'Inatividade').length),
+      encerramento_registrado: taxa(finalizados.length - por('Inatividade').length, finalizados.length),
+      atendente_identificado: taxa(comAtendente.filter((c) => c.atendente_blip).length, comAtendente.length),
+      primeira_resposta: taxa(comAtendente.filter((c) => c.transferido_em && c.primeira_resposta_em).length, comAtendente.filter((c) => c.transferido_em).length),
+    },
+  };
+
   return {
     periodo: { de, ate, fuso: TZ },
+    geral,
     recebidos: ciclos.length,
     passaram_pela_ia: comIa.length,
     transferencia: taxa(transferidos.filter((c) => c.ia_inicio).length, comIa.length),

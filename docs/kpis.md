@@ -81,3 +81,20 @@ Recebidos, contenção da IA, taxa de transferência, CSAT, TME p90 e abandono �
 - Nunca "média de médias": agregar a partir das conversas.
 - Comparar só períodos completos e com a mesma definição (a partir de 2026-10-31).
 - Taxas sempre com numerador e denominador explícitos no painel.
+
+## Auditoria dos dados (`node scripts/auditoria-dados.mjs [de] [até]`)
+
+Roteiro da skill validate-data, somente leitura. Confere:
+1. **Consistência interna** — partes somam o todo (só IA + com atendente = recebidos; finalizados + em andamento;
+   faixas do SLA; séries diárias; mapas de calor; CSAT), taxas entre 0 e 100%, p90 ≥ mediana.
+2. **Qualidade** — datas fora de ordem, notas fora de 1–5, atendente fora do domínio, ciclos duplicados ou fantasmas,
+   finalizados sem início, estados divergentes do status.
+3. **Fonte independente** — recontagem pelas notas "🔁 Atendimento: X → Y" das conversas (tolerância 3%: as notas usam
+   a hora de chegada no Chatwoot e o painel a hora da Blip).
+4. **CSAT** — notas ⭐ × campo `avaliacao` × CSAT nativo (a importação de 03/11 grava a data da importação).
+5. **Relatórios nativos** — só ordem de grandeza: o nativo conta conversas criadas, cada resolução (inclusive
+   reaberturas) e a média da 1ª resposta desde a criação da conversa; o painel conta atendimentos e usa mediana.
+
+Correções de dados feitas em 2026-11-05: `fix-ciclos-repesquisa.py` (24 ciclos-fantasma do pedido de avaliação
+repetido), `reconstruir-ciclos.py` (20 atendimentos de 30/10–03/11 sobrescritos antes da lista `ciclos` e 2 notas ⭐).
+Resultado em 31/10–04/11: 33 ok, 6 avisos explicados, 0 falhas.
