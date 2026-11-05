@@ -48,4 +48,8 @@ assert.deepEqual(k.serie.map((d) => [d.so_ia, d.com_humano]), [[2, 1], [1, 1]]);
 // nota em ciclo sem início: entra no CSAT (data do encerramento), não no volume
 const comSemInicio = calcularKpis([...convs, c(9, { finalizado_em: '2026-11-03T14:00:00Z', finalizado_por: 'IA', avaliacao: 3, avaliacao_de: 'IA' })], '2026-11-02', '2026-11-03');
 assert.equal(comSemInicio.recebidos, 5); assert.equal(comSemInicio.csat.geral.n, 3); assert.equal(comSemInicio.csat.ia.n, 2);
+// IA -> atendente sem passar pela fila: conta só em "com atendente" (os grupos somam o total)
+const direto = calcularKpis([c(10, { ia_inicio: '2026-11-02T15:00:00Z', humano_inicio: '2026-11-02T15:05:00Z', atendente_blip: 'ana@grupovirtus.com.br' })], '2026-11-02', '2026-11-02');
+assert.deepEqual([direto.geral.so_ia, direto.geral.com_humano, direto.recebidos], [0, 1, 1]);
+assert.deepEqual([direto.serie[0].so_ia, direto.serie[0].com_humano], [0, 1]);
 console.log('KPIs: todos os testes passaram');

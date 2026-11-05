@@ -101,7 +101,7 @@ export function calcularKpis(conversas, de, ate, metaMin = 15) {
       transferidos: doDia.filter((c) => c.transferido_em).length,
       finalizados_ia: fin.filter((c) => c.ia_inicio && !c.transferido_em).length,
       finalizados_humano: fin.filter((c) => c.humano_inicio).length,
-      so_ia: doDia.filter((c) => c.ia_inicio && !c.transferido_em).length,
+      so_ia: doDia.filter((c) => !c.transferido_em && !c.humano_inicio).length,
       com_humano: doDia.filter((c) => c.transferido_em || c.humano_inicio).length,
       resposta_mediana: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.5),
       resposta_p90: quantil(respondidos.filter((c) => dataLocal(t(c.transferido_em)) === dia).map(tResp), 0.9),
@@ -147,7 +147,7 @@ export function calcularKpis(conversas, de, ate, metaMin = 15) {
     .sort((x, y) => y.atendimentos - x.atendimentos);
 
   // Visão geral: IA x humano, desfecho e cobertura dos dados coletados
-  const soIa = ciclos.filter((c) => c.ia_inicio && !c.transferido_em);
+  const soIa = ciclos.filter((c) => !c.transferido_em && !c.humano_inicio);
   const comHumano = ciclos.filter((c) => c.transferido_em || c.humano_inicio);
   const por = (q) => finalizados.filter((c) => c.finalizado_por === q);
   const duracao = (lista) => resumoTempo(lista.filter((c) => t(c.finalizado_em) >= c.inicio).map((c) => (t(c.finalizado_em) - c.inicio) / 60000));
