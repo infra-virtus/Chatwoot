@@ -15,6 +15,9 @@ INICIO_CICLOS = datetime(2026, 11, 3, 16, 28, tzinfo=timezone.utc).timestamp()
 JANELA = 30 * 60
 NOTA = re.compile(r"^🔁 Atendimento: (.+?) → (.+?) \((.*)\)$", re.S)
 ESTRELA = re.compile(r"^⭐ Avaliação do cliente: ([1-5])/5 \((IA|Atendente)\)")
+# confirmação da Blip depois da nota ("Pronto, salvei aqui a avaliação ... 🎯 **Nota**: 5"), vale mesmo quando o cliente
+# respondeu fora da janela de 30 min e a ponte não registrou a nota
+CONFIRMA = re.compile(r"salvei aqui a avalia[çc][ãa]o[\s\S]*?nota\W*([1-5])", re.I)
 
 
 def call(path, method="GET", body=None):
@@ -99,18 +102,20 @@ for conv in convs:
     novos = [c for c in ciclos_das_notas(msgs) if inicio(c) < INICIO_CICLOS and not existe(c)]
     for c in novos: completar(c, msgs)
     lista = sorted(guardados + novos, key=lambda c: inicio(c) or ts(c.get("finalizado_em")) or 0)
-    # notas ⭐ que não estão em nenhum ciclo vão para o último ciclo finalizado antes delas (sem nota)
+    # notas ⭐ e confirmações da Blip que não estão em nenhum ciclo vão para o último ciclo finalizado antes delas (sem nota)
     mudou_atual = {}
     nota_nesta = 0
     for m in msgs:
-        e = ESTRELA.match(m.get("content") or "") if m.get("private") else None
+        texto = m.get("content") or ""
+        e = ESTRELA.match(texto) if m.get("private") else (CONFIRMA.search(texto) if m["message_type"] == 1 else None)
         if not e: continue
         t = m["created_at"]
         candidatos = lista + ([] if atual_dup else [ca])
         if any(x.get("avaliacao") is not None and x.get("avaliacao_em") and abs(ts(x["avaliacao_em"]) - t) < 600 for x in candidatos): continue
         alvo = next((x for x in reversed(lista) if x.get("finalizado_em") and ts(x["finalizado_em"]) <= t + 5), None)
         if alvo is None or alvo.get("avaliacao") is not None: continue
-        alvo.update(avaliacao=int(e.group(1)), avaliacao_de=e.group(2), avaliacao_em=iso(t))
+        de = e.group(2) if e.re is ESTRELA else ("IA" if alvo.get("finalizado_por") == "IA" else "Atendente")
+        alvo.update(avaliacao=int(e.group(1)), avaliacao_de=de, avaliacao_em=iso(t))
         notas_dev += 1
         nota_nesta += 1
         if atual_dup and alvo is lista[-1] and ca.get("avaliacao") is None:
@@ -122,4 +127,4 @@ for conv in convs:
     alteradas += 1; inseridos += len(novos)
 
 print(f"{'GRAVADO' if GRAVAR else 'SIMULAÇÃO'}: {len(convs)} conversas lidas, {alteradas} alteradas, "
-      f"{inseridos} atendimentos reconstruídos, {notas_dev} notas ⭐ devolvidas")
+      f"{inseridos} atendimentos reconstruídos, {notas_dev} notas devolvidas (⭐ ou confirmação da Blip)")

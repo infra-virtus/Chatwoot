@@ -2,7 +2,7 @@
 // conferência contra fontes independentes (notas "🔁 Atendimento" das conversas, notas ⭐, CSAT e relatórios nativos).
 // Somente leitura. uso: node scripts/auditoria-dados.mjs [AAAA-MM-DD de] [AAAA-MM-DD até]
 import { readFileSync } from 'node:fs';
-import { calcularKpis, ciclosDaConversa } from '../blip-bridge/painel/kpis.mjs';
+import { calcularKpis, ciclosDaConversa, avaliadosSemInicio } from '../blip-bridge/painel/kpis.mjs';
 
 const TOK = readFileSync(`${process.env.HOME}/.secrets/chatwoot.token`, 'utf8').trim();
 const BASE = 'https://visualchat.wendellcarvalho.com.br';
@@ -100,6 +100,7 @@ const comCiclo = [...new Set(ciclos.map((c) => c.conversa))];
 const alvo = convs.filter((c) => comCiclo.includes(c.id) || (c.last_activity_at >= inicioSP));
 const trans = [];
 const estrelas = [];
+const confirmacoes = []; // "Pronto, salvei aqui a avaliação ... Nota: N" da Blip
 for (const c of alvo) {
   for (let antes = null; ;) {
     const lote = (await api(`/conversations/${c.id}/messages${antes ? `?before=${antes}` : ''}`)).payload;
@@ -108,6 +109,8 @@ for (const c of alvo) {
       const mm = /^🔁 Atendimento: (.+?) → (.+?) \((.*)\)$/s.exec(m.content || '');
       if (m.private && mm) trans.push({ conversa: c.id, t, de: mm[1], para: mm[2], motivo: mm[3] });
       if (m.private && /^⭐ Avaliação do cliente: ([1-5])\/5/.test(m.content || '')) estrelas.push({ conversa: c.id, t, nota: Number(/([1-5])\/5/.exec(m.content)[1]) });
+      const conf = m.message_type === 1 && /salvei aqui a avalia[çc][ãa]o[\s\S]*?nota\W*([1-5])/i.exec(m.content || '');
+      if (conf) confirmacoes.push({ conversa: c.id, t, nota: Number(conf[1]) });
     }
     if (lote.length < 20 || Math.min(...lote.map((m) => m.created_at)) < inicioSP - 2 * 86400) break;
     antes = Math.min(...lote.map((m) => m.id));
@@ -137,9 +140,17 @@ igual('finalizações por inatividade: notas × painel', finInat, finEvento.filt
 
 // ---------- 4. CSAT: notas ⭐ × campo avaliacao × CSAT nativo ----------
 console.log('\n4. Satisfação (três registros da mesma nota)');
-const estrelasPeriodo = estrelas.filter((e) => noPeriodo(e.t));
-const avaliadosPeriodo = convs.flatMap(ciclosDaConversa).filter((c) => c.avaliacao != null && noPeriodo(T(c.avaliacao_em)));
-igual('notas ⭐ × avaliações gravadas nos ciclos (pela data da nota)', estrelasPeriodo.length, avaliadosPeriodo.length, 1, 'WARN');
+// Notas do cliente = ⭐ da ponte + confirmações da Blip sem ⭐ antes (nota respondida fora da janela, recuperada)
+const semEstrela = confirmacoes.filter((x) => !estrelas.some((e) => e.conversa === x.conversa && x.t - e.t >= 0 && x.t - e.t < 3600 * 1000));
+const estrelasPeriodo = [...estrelas, ...semEstrela].filter((e) => noPeriodo(e.t));
+console.log(`      notas: ${estrelas.filter((e) => noPeriodo(e.t)).length} ⭐ da ponte + ${semEstrela.filter((e) => noPeriodo(e.t)).length} só na confirmação da Blip`);
+const avaliadosPeriodo = [...convs.flatMap(ciclosDaConversa).filter((c) => c.avaliacao != null),
+  ...convs.flatMap((c) => avaliadosSemInicio(c).map((x) => ({ ...x, avaliacao_em: (c.custom_attributes.ciclos || []).concat([c.custom_attributes]).find((y) => T(y.finalizado_em) === x.inicio)?.avaliacao_em })))]
+  .filter((c) => noPeriodo(T(c.avaliacao_em)));
+// notas que não viraram avaliação em nenhum ciclo (para investigar)
+const soltas = estrelasPeriodo.filter((e) => !avaliadosPeriodo.some((c) => c.conversa === e.conversa && Math.abs(T(c.avaliacao_em) - e.t) < 3600 * 1000));
+if (soltas.length) console.log(`      notas sem avaliação no ciclo: ${soltas.length} — conversas ${[...new Set(soltas.map((e) => e.conversa))].slice(0, 10).join(', ')}`);
+igual('notas (⭐ + confirmações) × avaliações gravadas nos ciclos (pela data da nota)', estrelasPeriodo.length, avaliadosPeriodo.length, 1, 'WARN');
 const nativas = [];
 for (let p = 1; ; p++) {
   const l = await api(`/csat_survey_responses?page=${p}&since=${inicioSP}&until=${fimSP}`);
@@ -147,9 +158,9 @@ for (let p = 1; ; p++) {
   nativas.push(...l);
   if (l.length < 25) break;
 }
-const importadas = nativas.filter((n) => !estrelas.some((e) => e.conversa === n.conversation_id && noPeriodo(e.t)));
-console.log(`      CSAT nativo: ${nativas.length} respostas, ${importadas.length} sem nota ⭐ no período (importação das notas históricas em 03/11 grava a data da importação)`);
-igual('CSAT nativo (sem a importação) × notas ⭐', nativas.length - importadas.length, new Set(estrelasPeriodo.map((e) => e.conversa)).size, 1, 'WARN');
+const importadas = nativas.filter((n) => !estrelasPeriodo.some((e) => e.conversa === n.conversation_id));
+console.log(`      CSAT nativo: ${nativas.length} respostas, ${importadas.length} sem nota do cliente no período (importação das notas históricas em 03/11 grava a data da importação)`);
+igual('CSAT nativo (sem a importação) × conversas com nota (1 resposta por conversa no nativo)', nativas.length - importadas.length, new Set(estrelasPeriodo.map((e) => e.conversa)).size, 1, 'WARN');
 const media = (l) => (l.length ? l.reduce((s, x) => s + x, 0) / l.length : 0);
 igual('média CSAT nativo × média das notas ⭐', Number(media(nativas.map((n) => n.rating)).toFixed(2)), Number(media(estrelasPeriodo.map((e) => e.nota)).toFixed(2)), 0.05, 'WARN');
 

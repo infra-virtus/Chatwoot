@@ -47,8 +47,11 @@ const SURVEY = /avalia(r|ção|cao)|nota de [01] a (5|10)|de 1 a 5|satisfa(ção
 // Fluxo da Blip: saudação inicia um atendimento; despedida fecha a pesquisa de satisfação
 const SAUDACAO = /seja muito bem-vind|como posso te ajudar hoje/i;
 const DESPEDIDA = /agradecemos o seu contato/i;
-// A Blip repete o pedido de avaliação quando o cliente demora ("Vamos tentar novamente..."): continua o atendimento finalizado
-const REPESQUISA = /vamos tentar novamente/i;
+// Mensagens da pesquisa da Blip depois do pedido de avaliação (repetição, resposta à nota, comentário, confirmação):
+// continuam o atendimento finalizado, mesmo fora da janela de 30 min
+const POS_PESQUISA = /vamos tentar novamente|experiência com a nossa equipe|comentário sobre sua avaliação|salvei aqui a avalia/i;
+// Confirmação da Blip com a nota registrada ("Pronto, salvei aqui a avaliação... 🎯 **Nota**: 5"): fonte da nota sem janela de tempo
+const CONFIRMA_NOTA = /salvei aqui a avalia[çc][ãa]o[\s\S]*?nota\W*([1-5])/i;
 
 const ESTADO = {
   IA: 'IA',
@@ -375,6 +378,22 @@ function comNotaNoUltimoCiclo(ca, nota, de) {
   return ciclos;
 }
 
+// Nota da pesquisa no atendimento finalizado (vale a primeira): campos do ciclo, nota ⭐ para a equipe e CSAT nativo
+async function registrarNota(conversationId, nota) {
+  const conv = await api(`/conversations/${conversationId}`);
+  if (conv.custom_attributes?.avaliacao != null) return;
+  const de = conv.custom_attributes?.finalizado_por === 'IA' ? 'IA' : 'Atendente';
+  await api(`/conversations/${conversationId}/custom_attributes`, {
+    method: 'POST',
+    body: { custom_attributes: { avaliacao: nota, avaliacao_de: de, avaliacao_em: new Date().toISOString(), ciclos: comNotaNoUltimoCiclo(conv.custom_attributes, nota, de) }, merge: true },
+  });
+  await api(`/conversations/${conversationId}/messages`, {
+    method: 'POST', token: BOT_TOKEN, body: { content: `⭐ Avaliação do cliente: ${nota}/5 (${de})`, private: true },
+  });
+  await registrarCsatNativo(conv, nota);
+  log(`avaliação ${nota} (${de}) -> conversa ${conversationId}`);
+}
+
 // CSAT nativo do Chatwoot: a nota da pesquisa da Blip vira uma resposta de satisfação (relatório de CSAT,
 // atribuída ao responsável atual da conversa). Cria a mensagem de pesquisa com source_id (não é enviada ao
 // cliente) e registra a nota pelo endpoint público da pesquisa, o mesmo usado pela página de avaliação.
@@ -436,18 +455,7 @@ async function handle(msg) {
     if (!nota) return;
     const conversationId = await conversationFor(digits);
     if ((await estadoAtual(conversationId)) !== ESTADO.FIM || !(await dentroDoFechamento(conversationId))) return;
-    const conv = await api(`/conversations/${conversationId}`);
-    if (conv.custom_attributes?.avaliacao != null) return; // vale a primeira nota
-    const de = conv.custom_attributes?.finalizado_por === 'IA' ? 'IA' : 'Atendente';
-    await api(`/conversations/${conversationId}/custom_attributes`, {
-      method: 'POST',
-      body: { custom_attributes: { avaliacao: Number(nota[1]), avaliacao_de: de, avaliacao_em: new Date().toISOString(), ciclos: comNotaNoUltimoCiclo(conv.custom_attributes, Number(nota[1]), de) }, merge: true },
-    });
-    await api(`/conversations/${conversationId}/messages`, {
-      method: 'POST', token: BOT_TOKEN, body: { content: `⭐ Avaliação do cliente: ${nota[1]}/5 (${de})`, private: true },
-    });
-    await registrarCsatNativo(conv, Number(nota[1]));
-    log(`avaliação ${nota[1]} (${de}) -> conversa ${conversationId}`);
+    await registrarNota(conversationId, Number(nota[1]));
     return;
   }
 
@@ -485,7 +493,9 @@ async function handle(msg) {
   // Uma saudação do bot é o começo de um novo atendimento e encerra a janela; a mensagem de despedida
   // da pesquisa encerra a janela depois de manter a conversa finalizada.
   // Pedido de avaliação repetido depois da janela: não abre um atendimento novo, reabre a janela para receber a nota
-  if (atual === ESTADO.FIM && (SURVEY.test(text) || REPESQUISA.test(text)) && !SAUDACAO.test(text)) {
+  if (atual === ESTADO.FIM && (SURVEY.test(text) || POS_PESQUISA.test(text)) && !SAUDACAO.test(text)) {
+    const confirmada = CONFIRMA_NOTA.exec(text);
+    if (confirmada) await registrarNota(conversationId, Number(confirmada[1]));
     finalizadoEm.set(conversationId, Date.now());
     await setStatus(await api(`/conversations/${conversationId}`), 'resolved');
     return;

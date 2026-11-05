@@ -98,3 +98,12 @@ Roteiro da skill validate-data, somente leitura. Confere:
 Correções de dados feitas em 2026-11-05: `fix-ciclos-repesquisa.py` (24 ciclos-fantasma do pedido de avaliação
 repetido), `reconstruir-ciclos.py` (20 atendimentos de 30/10–03/11 sobrescritos antes da lista `ciclos` e 2 notas ⭐).
 Resultado em 31/10–04/11: 33 ok, 6 avisos explicados, 0 falhas.
+
+### Notas da pesquisa (2026-11-05)
+- Fonte principal: confirmação da Blip "Pronto, salvei aqui a avaliação ... Nota: N" (sem janela de tempo); a resposta
+  numérica do cliente vale até 30 min após o pedido. Mensagens da pesquisa (repetição, "...sua experiência com a nossa
+  equipe...", pedido de comentário, confirmação) continuam o atendimento finalizado, sem abrir um novo.
+- `reconstruir-ciclos.py` também usa as confirmações: 18 notas recuperadas em 05/11. `backfill-csat.py` sincronizou 13 no CSAT nativo.
+- CSAT nativo guarda 1 resposta por conversa (a última); o painel conta cada atendimento — o painel é a referência.
+- "Finalizados sem início": a Blip mandou a pesquisa numa conversa cujo atendimento a ponte não viu (fluxo da Blip sem o
+  webhook). A nota entra na satisfação; o atendimento não entra no volume.
