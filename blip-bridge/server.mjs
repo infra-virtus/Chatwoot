@@ -542,7 +542,6 @@ async function usuarioDaSessao(req) {
   return usuario;
 }
 
-const cacheKpis = new Map(); // "de|ate" -> { dados, expira }
 
 async function conversasDesde(dataIso) {
   const lista = [];
@@ -593,31 +592,45 @@ async function agoraAoVivo() {
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLA_RESPOSTA_MIN = Number(process.env.SLA_RESPOSTA_MIN || 15);
 
-async function kpisDoPeriodo(de, ate) {
-  const chave = `${de}|${ate}`;
-  const cache = cacheKpis.get(chave);
-  if (cache && cache.expira > Date.now()) return cache.dados;
-  // Busca conversas com atividade desde a véspera do início (ciclos que começaram no período)
-  const desde = new Date(Date.parse(`${de}T00:00:00-03:00`) - 86400000).toISOString().slice(0, 10);
-  const conversas = await conversasDesde(desde);
-  const dados = { ...calcularKpis(conversas, de, ate, SLA_RESPOSTA_MIN), conversas_lidas: conversas.length, calculado_em: new Date().toISOString(), dados_desde: '2026-10-30' };
-  cacheKpis.set(chave, { dados, expira: Date.now() + 6 * 60 * 1000 });
-  if (cacheKpis.size > 50) cacheKpis.delete(cacheKpis.keys().next().value);
-  return dados;
-}
-
-// Pré-cálculo dos períodos dos botões (Hoje, 7 e 30 dias) a cada 5 min: a tela abre sem esperar a leitura
+// Leitura das conversas para o painel: uma "foto" dos últimos 30 dias renovada a cada 5 min em segundo plano
+// (a leitura leva mais de 1 min). Os períodos dentro dela são calculados da memória em milissegundos; enquanto a foto
+// nova é lida, vale a anterior. Pedidos ao mesmo tempo compartilham a mesma leitura.
+const FOTO_DIAS = 30;
 const hojeSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const diasAtras = (n) => new Date(Date.parse(`${hojeSP()}T12:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
-async function aquecerPainel() {
-  if (!PAINEL_EMAILS.length) return;
-  for (const n of [6, 0, 29]) {
-    cacheKpis.delete(`${diasAtras(n)}|${hojeSP()}`);
-    await kpisDoPeriodo(diasAtras(n), hojeSP());
-  }
+let foto = null; // { desde, conversas, lida_em }
+let lendoFoto = null;
+function atualizarFoto() {
+  lendoFoto ||= conversasDesde(diasAtras(FOTO_DIAS))
+    .then((conversas) => (foto = { desde: diasAtras(FOTO_DIAS), conversas, lida_em: new Date().toISOString() }))
+    .finally(() => { lendoFoto = null; });
+  return lendoFoto;
 }
-setTimeout(() => aquecerPainel().catch((e) => log('ERRO painel (pré-cálculo)', e.message)), 20000).unref();
-setInterval(() => aquecerPainel().catch((e) => log('ERRO painel (pré-cálculo)', e.message)), 5 * 60 * 1000).unref();
+
+// Períodos que começam antes da foto (até 92 dias): leitura própria, guardada por 6 min
+const avulsas = new Map(); // desde -> { promessa, expira }
+async function conversasPara(de) {
+  if (foto && foto.desde <= de) return foto;
+  if (diasAtras(FOTO_DIAS) <= de) return atualizarFoto();
+  const desde = new Date(Date.parse(`${de}T00:00:00-03:00`) - 86400000).toISOString().slice(0, 10);
+  const guardada = avulsas.get(desde);
+  if (guardada && guardada.expira > Date.now()) return guardada.promessa;
+  const promessa = conversasDesde(desde).then((conversas) => ({ desde, conversas, lida_em: new Date().toISOString() }));
+  avulsas.set(desde, { promessa, expira: Date.now() + 6 * 60 * 1000 });
+  promessa.catch(() => avulsas.delete(desde));
+  if (avulsas.size > 20) avulsas.delete(avulsas.keys().next().value);
+  return promessa;
+}
+
+async function kpisDoPeriodo(de, ate) {
+  const base = await conversasPara(de);
+  return { ...calcularKpis(base.conversas, de, ate, SLA_RESPOSTA_MIN), conversas_lidas: base.conversas.length, calculado_em: base.lida_em, dados_desde: '2026-10-30' };
+}
+
+if (PAINEL_EMAILS.length) {
+  setTimeout(() => atualizarFoto().catch((e) => log('ERRO painel (leitura)', e.message)), 20000).unref();
+  setInterval(() => atualizarFoto().catch((e) => log('ERRO painel (leitura)', e.message)), 5 * 60 * 1000).unref();
+}
 
 async function rotaPainel(req, res) {
   const url = new URL(req.url, 'http://local');

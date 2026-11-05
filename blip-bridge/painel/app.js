@@ -57,10 +57,36 @@
       c: `ciclos com início (entrada na IA, transferência ou atendente) no período = ${num(k?.recebidos)}; ${num(k?.passaram_pela_ia)} passaram pela IA`, f: FONTE_CICLO }),
     transferencia: () => ({ t: 'Transferidos para humano', o: 'Quanto do que passou pela IA precisou de um atendente.',
       c: taxaConta(k?.transferencia, 'atendimentos com IA que foram transferidos', 'atendimentos com IA'), f: FONTE_CICLO }),
-    contencao: () => ({ t: 'Resolvidos só pela IA', o: 'Quanto a IA resolveu sozinha, sem transferir. Só entram atendimentos já finalizados.',
+    contencao: () => ({ t: 'Resolvidos só pela IA', o: 'Quanto a IA resolveu sozinha, sem transferir. Só entram atendimentos já finalizados; inclui os que terminaram por inatividade (ver "Saíram sem concluir").',
       c: taxaConta(k?.contencao_ia, 'finalizados com IA e sem transferência', 'finalizados que passaram pela IA'), f: `${FONTE_CICLO} Finalizado = pedido de avaliação da Blip, ticket encerrado ou 24h sem atividade.` }),
-    csat_ia: () => ({ t: 'Satisfação com a IA', o: 'Nota média dos clientes em atendimentos encerrados pela IA (escala 1 a 5).',
-      c: csatConta(k?.csat?.ia), f: FONTE_CSAT }),
+    ia_inatividade: () => ({ t: 'IA: cliente saiu sem concluir', o: 'Atendimentos só da IA que terminaram porque o cliente parou de responder (24h sem atividade), e não com a pesquisa de avaliação. Esses casos entram em "Resolvidos só pela IA", mas não dá para saber se o cliente foi atendido.',
+      c: taxaConta(k?.geral?.ia_inatividade, 'finalizados só pela IA por inatividade', 'finalizados só pela IA'), f: FONTE_CICLO }),
+    duracao_ia: () => ({ t: 'Duração do atendimento da IA', o: 'Quanto tempo a IA leva para concluir um atendimento sozinha (até o pedido de avaliação).',
+      c: tempoConta(k?.geral?.duracao_ia_min, 'encerramento − início, atendimentos finalizados pela IA sem transferência'), f: FONTE_CICLO }),
+    ge_ao_vivo: () => ({ t: 'Em atendimento agora', o: 'Todos os clientes sendo atendidos neste momento, pela IA, na fila ou por atendente.',
+      c: `ao vivo IA (${num(a?.ia)}) + aguardando (${num(a?.aguardando)}) + ao vivo humano (${num(a?.humano)}) = ${num(a ? a.ia + a.aguardando + a.humano : null)}`, f: FONTE_ESTADO }),
+    clientes: () => ({ t: 'Clientes atendidos', o: 'Pessoas diferentes que tiveram pelo menos um atendimento no período (cada cliente tem uma conversa única no Chatwoot).',
+      c: `conversas distintas com atendimento iniciado no período = ${num(k?.geral?.clientes)}; ${num(k?.geral?.clientes_que_voltaram)} voltaram com mais de um atendimento`, f: FONTE_CICLO }),
+    finalizados: () => ({ t: 'Finalizados', o: 'Atendimentos do período que já terminaram, e quantos ainda estão em andamento.',
+      c: `iniciados no período (${num(k?.recebidos)}) = finalizados (${num(k?.geral?.finalizados)}) + em andamento (${num(k?.geral?.em_andamento)})`, f: FONTE_CICLO }),
+    participacao_ia: () => ({ t: 'Atendidos só pela IA', o: 'Parte do total de atendimentos que ficou só com a IA, sem transferência (inclui os que ainda estão com a IA).',
+      c: taxaConta(k?.geral?.participacao_ia, 'atendimentos sem transferência', 'atendimentos recebidos'), f: FONTE_CICLO }),
+    comparativo: () => ({ t: 'IA × Humano', o: 'Os mesmos atendimentos do período separados em dois grupos: os que ficaram só com a IA e os que passaram por um atendente. Cada atendimento está em um grupo só.',
+      c: `só IA = sem transferência (${num(k?.geral?.so_ia)}); com atendente = transferidos ou com atendente (${num(k?.geral?.com_humano)}); total = ${num(k?.recebidos)}. Durações em mediana, do início do atendimento ao encerramento.`, f: FONTE_CICLO }),
+    g_composicao: () => ({ t: 'Atendimentos por dia: só IA × com atendente', o: 'Como o volume de cada dia se divide entre a IA e os atendentes.',
+      c: 'por dia de início: só IA = atendimentos sem transferência; com atendente = transferidos ou atendidos por humano. Soma = recebidos do dia.', f: FONTE_CICLO }),
+    g_desfecho: () => ({ t: 'Como os atendimentos terminaram', o: 'Quem encerrou cada atendimento finalizado no período.',
+      c: `IA = pedido de avaliação após atendimento da IA (${num(k?.geral?.finalizados_por?.IA)}); atendente = pedido de avaliação ou ticket fechado após atendente (${num(k?.geral?.finalizados_por?.Atendente)}); inatividade = 24h sem resposta (${num(k?.geral?.finalizados_por?.Inatividade)})`, f: FONTE_CICLO }),
+    g_desfecho_ia: () => ({ t: 'Desfecho dos atendimentos da IA', o: 'O que aconteceu com os atendimentos finalizados que passaram pela IA.',
+      c: 'concluídos pela IA = encerrados com pedido de avaliação sem transferência; saíram sem concluir = 24h sem resposta sem transferência; transferidos = foram para um atendente', f: FONTE_CICLO }),
+    cob_pesquisa: () => ({ t: 'Pesquisa de satisfação respondida', o: 'De cada atendimento encerrado com pesquisa, quantos clientes responderam com uma nota. Quanto maior, mais confiável a satisfação. Para aumentar: pedir a nota de forma direta ("responda de 1 a 5") e lembrar o cliente na despedida.',
+      c: taxaConta(k?.geral?.cobertura?.pesquisa_respondida, 'finalizados com nota', 'finalizados pela IA ou atendente (sem inatividade)'), f: FONTE_CSAT }),
+    cob_encerramento: () => ({ t: 'Encerramento registrado', o: 'Atendimentos que terminaram com um encerramento claro (pesquisa ou ticket fechado), e não por 24h de silêncio. Para aumentar: atendentes encerrarem o ticket na Blip ao concluir, e a IA sempre finalizar com a pesquisa.',
+      c: taxaConta(k?.geral?.cobertura?.encerramento_registrado, 'finalizados por IA ou atendente', 'todos os finalizados'), f: FONTE_CICLO }),
+    cob_atendente: () => ({ t: 'Atendente identificado', o: 'Atendimentos humanos em que a Blip informou quem respondeu. Sem isso, o atendimento não entra na tabela por atendente.',
+      c: taxaConta(k?.geral?.cobertura?.atendente_identificado, 'atendimentos humanos com e-mail do atendente', 'atendimentos humanos'), f: 'E-mail do atendente enviado pela Blip em cada mensagem (domínio grupovirtus.com.br).' }),
+    cob_resposta: () => ({ t: '1ª resposta registrada', o: 'Atendimentos transferidos e atendidos em que a hora da 1ª mensagem do atendente foi gravada. É a base do SLA.',
+      c: taxaConta(k?.geral?.cobertura?.primeira_resposta, 'transferidos atendidos com 1ª resposta', 'transferidos atendidos'), f: `${FONTE_CICLO} Gravado desde 03/11; histórico desde 30/10 recuperado das mensagens.` }),
     chamados: () => ({ t: 'Chamados para atendente', o: 'Transferências da IA para humano no período e a situação de cada uma.',
       c: `transferidos = ${num(k?.sla?.transferidos)}: respondidos ${num(k?.sla?.respondidos)}, encerrados sem resposta ${num(k?.sla?.sem_resposta)}, ainda aguardando ${num(k?.sla?.aguardando_resposta)}`, f: FONTE_CICLO }),
     sla_resposta: () => ({ t: 'Tempo de 1ª resposta (SLA)', o: 'Quanto tempo o cliente espera, depois de transferido, até o atendente mandar a primeira mensagem. É o tempo que o cliente sente de verdade.',
@@ -79,7 +105,6 @@
       c: 'por dia de início do atendimento: recebidos = ciclos iniciados; transferidos = ciclos com transferência', f: FONTE_CICLO }),
     g_finalizados: () => ({ t: 'Finalizados: só IA × com atendente', o: 'Como os atendimentos terminaram, por dia de início.',
       c: 'só IA = finalizados que passaram pela IA sem transferência; com atendente = finalizados que tiveram atendente', f: FONTE_CICLO }),
-    g_csat_ia: () => ({ t: 'Notas da IA', o: 'Quantas avaliações de cada nota a IA recebeu.', c: csatConta(k?.csat?.ia), f: FONTE_CSAT }),
     g_calor: () => ({ t: 'Picos de entrada', o: 'Em que dia da semana e hora os atendimentos começam. Use para planejar a escala.',
       c: 'contagem de atendimentos iniciados por dia da semana × hora (horário de Brasília)', f: FONTE_CICLO }),
     g_resposta_dia: () => ({ t: 'Tempo de 1ª resposta por dia', o: 'Evolução do SLA: mediana e p90 (90% dos clientes foram respondidos até esse tempo).',
@@ -291,6 +316,12 @@
   async function carregarAgora() {
     try {
       a = await pegar('/painel-ia/api/agora');
+      $('#ge-agora').innerHTML = [
+        tile('Em atendimento agora', num(a.ia + a.aguardando + a.humano), 'IA + fila + atendentes', 'ge_ao_vivo'),
+        tile('Ao vivo IA', num(a.ia), 'bot da Blip atendendo', 'ia_ao_vivo'),
+        tile('Aguardando atendente', num(a.aguardando), `${num(a.fora_da_meta)} acima de ${a.meta_min} min`, 'aguardando'),
+        tile('Ao vivo humano', num(a.humano), `${num(a.atendentes_ativos)} atendentes`, 'humano_ao_vivo'),
+      ].join('');
       $('#ia-agora').innerHTML = [
         tile('Ao vivo IA', num(a.ia), 'bot da Blip atendendo agora', 'ia_ao_vivo'),
         tile('Aguardando atendente', num(a.aguardando), 'transferidos pela IA, sem resposta', 'aguardando'),
@@ -314,14 +345,54 @@
       tile('Atendimentos recebidos', num(k.recebidos), `${num(k.passaram_pela_ia)} passaram pela IA`, 'recebidos'),
       tile('Transferidos para humano', pct(k.transferencia), frac(k.transferencia), 'transferencia'),
       tile('Resolvidos só pela IA', pct(k.contencao_ia), frac(k.contencao_ia), 'contencao'),
-      tile('Satisfação com a IA', k.csat.ia.media == null ? '—' : `${nf.format(k.csat.ia.media)} / 5`, k.csat.ia.n ? `${pct(k.csat.ia.positivas)} notas 4–5 · ${k.csat.ia.n} avaliações` : 'sem avaliações', 'csat_ia'),
+      tile('Saíram sem concluir', pct(k.geral.ia_inatividade), `${frac(k.geral.ia_inatividade)} finalizados só pela IA`, 'ia_inatividade'),
+      tile('Duração do atendimento da IA', minutos(k.geral.duracao_ia_min.mediana), `mediana · 90% até ${minutos(k.geral.duracao_ia_min.p90)}`, 'duracao_ia'),
     ].join('');
     graficoLinhas($('#g-volume'), 'Recebidos e transferidos por dia', 'Atendimentos iniciados e quantos foram para um atendente', k.serie,
       [{ campo: 'recebidos', nome: 'Recebidos', cor: '--series-1' }, { campo: 'transferidos', nome: 'Transferidos', cor: '--series-2' }], 'g_volume');
     graficoBarras($('#g-finalizados'), 'Finalizados: só IA × com atendente', 'Por dia de início do atendimento', k.serie.map((d) => diaCurto(d.dia)),
       k.serie.map((d) => [d.finalizados_ia, d.finalizados_humano]), [{ nome: 'Só IA', cor: '--series-1' }, { nome: 'Com atendente', cor: '--series-2' }], 'Dia', 'g_finalizados');
-    graficoBarras($('#g-csat-ia'), ...notasCsat(k.csat.ia, 'Notas da IA', 'g_csat_ia'));
+    const g = k.geral;
+    const transferidosFin = k.abandono_fila.den;
+    graficoBarras($('#g-desfecho-ia'), 'Desfecho dos atendimentos da IA', 'Atendimentos finalizados que passaram pela IA',
+      ['Concluídos pela IA', 'Saíram sem concluir', 'Transferidos'],
+      [[g.ia_concluidos], [g.ia_inatividade.num], [transferidosFin]], [{ nome: 'Atendimentos', cor: '--series-1' }], 'Desfecho', 'g_desfecho_ia');
     graficoCalor($('#g-calor'), k.calor, 'Picos de entrada', 'Atendimentos iniciados por dia da semana e hora (Brasília)', 'atendimentos', 'g_calor');
+  }
+
+  const linhaComp = (rotulo, info, ia, hu, total) => `<tr><td><span class="rot-linha">${esc(rotulo)}${info ? botaoInfo(info) : ''}</span></td><td class="n">${esc(ia)}</td><td class="n">${esc(hu)}</td><td class="n">${esc(total)}</td></tr>`;
+  const medidor = (t) => (t?.pct == null ? '' : `<span class="medidor" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, t.pct))}%"></i></span>`);
+  const tileTaxa = (rotulo, t, info, dica) => `<div class="tile"><span class="rot">${esc(rotulo)}${botaoInfo(info)}</span><span class="val">${esc(pct(t))}</span>
+    <span class="det">${esc(frac(t))}</span>${medidor(t)}${dica ? `<span class="dica">${esc(dica)}</span>` : ''}</div>`;
+
+  function telaGeral() {
+    const g = k.geral;
+    const parte = (n) => (k.recebidos ? `${nf.format((100 * n) / k.recebidos)}%` : '—');
+    $('#ge-kpis').innerHTML = [
+      tile('Atendimentos recebidos', num(k.recebidos), `${num(g.so_ia)} só IA · ${num(g.com_humano)} com atendente`, 'recebidos'),
+      tile('Clientes atendidos', num(g.clientes), `${num(g.clientes_que_voltaram)} voltaram mais de uma vez`, 'clientes'),
+      tile('Finalizados', num(g.finalizados), `${num(g.em_andamento)} em andamento`, 'finalizados'),
+      tile('Atendidos só pela IA', pct(g.participacao_ia), frac(g.participacao_ia), 'participacao_ia'),
+    ].join('');
+    $('#comparativo').innerHTML = `<thead><tr><th></th><th class="n">Só IA</th><th class="n">Com atendente</th><th class="n">Total</th></tr></thead><tbody>
+      ${linhaComp('Atendimentos', 'comparativo', num(g.so_ia), num(g.com_humano), num(k.recebidos))}
+      ${linhaComp('Participação', null, parte(g.so_ia), parte(g.com_humano), '100%')}
+      ${linhaComp('Finalizados', 'g_desfecho', num(g.finalizados_so_ia), num(g.finalizados_com_humano), num(g.finalizados))}
+      ${linhaComp('Duração do atendimento (mediana)', 'duracao_ia', minutos(g.duracao_ia_min.mediana), minutos(g.duracao_humano_min.mediana), '—')}
+      ${linhaComp('Saíram sem concluir', 'ia_inatividade', pct(g.ia_inatividade), pct(k.abandono_fila), '—')}
+      ${linhaComp('Tempo de 1ª resposta (mediana)', 'sla_resposta', '—', minutos(k.sla.primeira_resposta_min.mediana), '—')}
+      ${linhaComp('Satisfação (média)', 'csat_hu', '—', k.csat.atendente.media == null ? '—' : `${nf.format(k.csat.atendente.media)} / 5`, '—')}</tbody>`;
+    graficoBarras($('#g-composicao'), 'Atendimentos por dia: só IA × com atendente', 'Por dia de início do atendimento', k.serie.map((d) => diaCurto(d.dia)),
+      k.serie.map((d) => [d.so_ia, d.com_humano]), [{ nome: 'Só IA', cor: '--series-1' }, { nome: 'Com atendente', cor: '--series-2' }], 'Dia', 'g_composicao');
+    graficoBarras($('#g-desfecho'), 'Como os atendimentos terminaram', `${num(g.finalizados)} finalizados no período`, ['IA', 'Atendente', 'Inatividade (24h)'],
+      [[g.finalizados_por.IA], [g.finalizados_por.Atendente], [g.finalizados_por.Inatividade]], [{ nome: 'Atendimentos', cor: '--series-1' }], 'Encerrado por', 'g_desfecho');
+    const c = g.cobertura;
+    $('#ge-cobertura').innerHTML = [
+      tileTaxa('Pesquisa de satisfação respondida', c.pesquisa_respondida, 'cob_pesquisa', 'meta sugerida: 40% ou mais'),
+      tileTaxa('Encerramento registrado', c.encerramento_registrado, 'cob_encerramento', 'o resto terminou por 24h de silêncio'),
+      tileTaxa('Atendente identificado', c.atendente_identificado, 'cob_atendente'),
+      tileTaxa('1ª resposta registrada', c.primeira_resposta, 'cob_resposta'),
+    ].join('');
   }
 
   function telaHumano() {
@@ -353,14 +424,15 @@
 
   async function carregarPeriodo() {
     $('#app').classList.add('carregando');
-    document.querySelectorAll('.periodo-txt').forEach((el) => { el.textContent = `· ${diaCurto(periodo.de)} a ${diaCurto(periodo.ate)} · calculando…`; });
+    document.querySelectorAll('.periodo-txt').forEach((el) => { el.textContent = `· ${diaCurto(periodo.de)} a ${diaCurto(periodo.ate)} · carregando… (logo após uma atualização da ponte pode levar até 2 min)`; });
     try {
       k = await pegar(`/painel-ia/api/kpis?de=${periodo.de}&ate=${periodo.ate}`);
+      telaGeral();
       telaIA();
       telaHumano();
       document.querySelectorAll('.periodo-txt').forEach((el) => { el.textContent = `· ${diaCurto(periodo.de)} a ${diaCurto(periodo.ate)} · ${k.conversas_lidas} conversas lidas`; });
       $('#notas').innerHTML = `<span>Clique no ⓘ de cada número para ver o que ele mede e a conta usada. Unidade: atendimento (IA → fila → atendente → fim); uma conversa reaberta conta um novo atendimento. Tempos em mediana e p90. Horário de Brasília.</span>
-        <span>Dados de estado desde 30/10/2026; compare períodos completos a partir de 31/10. Definições: docs/kpis.md. Calculado às ${new Date(k.calculado_em).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })} (cache de 5 min).</span>`;
+        <span>Dados de estado desde 30/10/2026; compare períodos completos a partir de 31/10. Definições: docs/kpis.md. Dados lidos às ${new Date(k.calculado_em).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })} (atualiza a cada 5 min).</span>`;
     } catch (e) {
       tratarErro(e);
     } finally {
@@ -397,7 +469,7 @@
       mostrarAba(prox.id.slice(4), true);
     });
   });
-  mostrarAba(location.hash === '#humano' ? 'humano' : 'ia');
+  mostrarAba(['#ia', '#humano'].includes(location.hash) ? location.hash.slice(1) : 'geral');
 
   // ---------- filtros ----------
   const botoes = [...document.querySelectorAll('.filtros button')];

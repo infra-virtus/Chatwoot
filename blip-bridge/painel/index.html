@@ -82,6 +82,8 @@
   .tile.destaque { border-color: var(--accent); grid-column: span 2; }
   .tile.destaque .val { font-size: 34px; color: var(--accent); }
   @media (max-width: 420px) { .tile.destaque { grid-column: auto; } }
+  .tile .dica { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+  .rot-linha { display: inline-flex; align-items: center; gap: 6px; }
   .medidor { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; margin-top: 4px; }
   .medidor i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
   .carregando { opacity: .55; transition: opacity .2s; }
@@ -105,11 +107,35 @@
   </header>
 
   <div class="abas" role="tablist" aria-label="Visões">
-    <button type="button" role="tab" id="tab-ia" aria-controls="aba-ia" aria-selected="true">IA</button>
+    <button type="button" role="tab" id="tab-geral" aria-controls="aba-geral" aria-selected="true">Geral</button>
+    <button type="button" role="tab" id="tab-ia" aria-controls="aba-ia" aria-selected="false">IA</button>
     <button type="button" role="tab" id="tab-humano" aria-controls="aba-humano" aria-selected="false">Humano</button>
   </div>
 
-  <div class="aba" id="aba-ia" role="tabpanel" aria-labelledby="tab-ia">
+  <div class="aba" id="aba-geral" role="tabpanel" aria-labelledby="tab-geral">
+    <section aria-label="Agora (geral)">
+      <h2>Agora <span class="sub agora-hora"></span></h2>
+      <div class="tiles" id="ge-agora"></div>
+    </section>
+    <section aria-label="Totais do período">
+      <h2>Totais no período <span class="sub periodo-txt"></span></h2>
+      <div class="tiles" id="ge-kpis"></div>
+    </section>
+    <section class="cartao" aria-labelledby="t-comp">
+      <h3 id="t-comp">IA × Humano <button type="button" class="info" data-info="comparativo" aria-label="Como é calculado" aria-expanded="false">i</button></h3>
+      <div class="rolagem"><table id="comparativo"></table></div>
+    </section>
+    <div class="grade">
+      <div class="cartao" id="g-composicao"></div>
+      <div class="cartao" id="g-desfecho"></div>
+    </div>
+    <section aria-label="Cobertura dos dados">
+      <h2>Cobertura dos dados <span class="sub">· quanto da informação está sendo coletada</span></h2>
+      <div class="tiles" id="ge-cobertura"></div>
+    </section>
+  </div>
+
+  <div class="aba" id="aba-ia" role="tabpanel" aria-labelledby="tab-ia" hidden>
     <section aria-label="Agora (IA)">
       <h2>Agora <span class="sub agora-hora"></span></h2>
       <div class="tiles" id="ia-agora"></div>
@@ -121,7 +147,7 @@
     <div class="grade">
       <div class="cartao" id="g-volume"></div>
       <div class="cartao" id="g-finalizados"></div>
-      <div class="cartao" id="g-csat-ia"></div>
+      <div class="cartao" id="g-desfecho-ia"></div>
       <div class="cartao" id="g-calor"></div>
     </div>
   </div>
